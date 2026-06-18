@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "config.h"
+#include "services/timezone_calc.h"
 
 namespace services::location {
 
@@ -42,6 +43,9 @@ void persist(double lat, double lon) {
   prefs.end();
   s_lat = lat;
   s_lon = lon;
+  
+  // Update timezone cache when location changes
+  tzCalc_setCachedLocation(lat, lon);
 }
 
 }  // namespace
@@ -58,6 +62,9 @@ void init() {
     }
   }
   prefs.end();
+  
+  // Initialize timezone cache on startup
+  tzCalc_setCachedLocation(s_lat, s_lon);
 }
 
 double lat() { return s_lat; }

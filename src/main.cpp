@@ -9,6 +9,7 @@
 #include "hardware/display.h"
 #include "services/adsb_client.h"
 #include "services/radar_location.h"
+#include "services/time_sync.h"
 #include "services/wifi_setup.h"
 #include "ui/radar_display.h"
 #include "ui/radar_range.h"
@@ -78,6 +79,8 @@ void setup() {
   services::adsb::setPollFn(wifiLoop);
 
   if (wifiSetupConnect()) {
+    // Initialize NTP time sync after WiFi connects
+    timeSync_init();
     showRadarIfConnected();
   }
 }

@@ -5,12 +5,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <time.h>
 
 #include "config.h"
 #include "hardware/display.h"
 #include "hardware/display_font.h"
 #include "services/adsb_client.h"
 #include "services/radar_location.h"
+#include "services/time_sync.h"
+#include "services/timezone_calc.h"
 #include "ui/radar_range.h"
 #include "ui/radar_theme.h"
 #include "ui/runway_overlay.h"
@@ -18,6 +21,10 @@
 namespace fonts = lgfx::v1::fonts;
 
 namespace ui {
+
+// Clock display mode: true when showing clock, false when showing radar
+static bool s_show_clock_mode = false;
+
 namespace radar {
 
 uint16_t kColorBackground = 0x0000;
@@ -636,6 +643,73 @@ void drawScaleLabel(int cx, int cy, int outer_radius) {
                                scaleLabelAnchorX(cx, outer_radius), cy);
 }
 
+// Draw a 12-digit clock face with hour/minute/second hands
+void drawClockFace(int cx, int cy, int radius, time_t localTime, bool tickSecond) {
+  const DrawScope scope(*s_draw);
+  
+  // Extract hours, minutes, seconds from local time
+  struct tm *tm_info = localtime(&localTime);
+  int hours = tm_info->tm_hour;
+  int minutes = tm_info->tm_min;
+  int seconds = tm_info->tm_sec;
+  
+  // Draw clock background circle
+  s_draw->fillSmoothCircle(cx, cy, radius, radar::kColorBackground);
+  s_draw->drawSmoothCircle(cx, cy, radius, radar::kColorGrid);
+  
+  // Draw 12 hour markers and digits
+  applyCardinalStyle();
+  s_draw->setTextColor(radar::kColorLabel, radar::kColorBackground);
+  s_draw->setTextDatum(textdatum_t::middle_center);
+  
+  const float kPi = 3.14159265359f;
+  for (int i = 1; i <= 12; ++i) {
+    const float angle_rad = (i - 3) * kPi / 6.0f;  // -3 to rotate 12 to top
+    const int marker_radius = radius - 12;
+    const int x = cx + static_cast<int>(cosf(angle_rad) * marker_radius);
+    const int y = cy + static_cast<int>(sinf(angle_rad) * marker_radius);
+    
+    char digit_str[3];
+    snprintf(digit_str, sizeof(digit_str), "%d", i);
+    s_draw->drawString(digit_str, x, y);
+  }
+  
+  // Draw center dot
+  drawCenterDot(cx, cy);
+  
+  // Calculate hand angles (in radians, with 12 o'clock = -π/2)
+  // Hour hand: 360° in 12 hours = 30° per hour, plus minute offset
+  float hour_angle = (hours % 12 + minutes / 60.0f) * 30.0f * kPi / 180.0f;
+  hour_angle -= kPi / 2.0f;  // Rotate to 12 o'clock position
+  
+  // Minute hand: 360° in 60 minutes = 6° per minute, plus second offset
+  float minute_angle = (minutes + seconds / 60.0f) * 6.0f * kPi / 180.0f;
+  minute_angle -= kPi / 2.0f;
+  
+  // Second hand: 360° in 60 seconds = 6° per second
+  float second_angle = seconds * 6.0f * kPi / 180.0f;
+  second_angle -= kPi / 2.0f;
+  
+  // Draw hour hand (short, thick)
+  int hour_len = (radius * 4) / 10;
+  int hour_x = cx + static_cast<int>(cosf(hour_angle) * hour_len);
+  int hour_y = cy + static_cast<int>(sinf(hour_angle) * hour_len);
+  s_draw->drawWideLine(cx, cy, hour_x, hour_y, 3.0f, radar::kColorLabel);
+  
+  // Draw minute hand (medium, thinner)
+  int minute_len = (radius * 6) / 10;
+  int minute_x = cx + static_cast<int>(cosf(minute_angle) * minute_len);
+  int minute_y = cy + static_cast<int>(sinf(minute_angle) * minute_len);
+  s_draw->drawWideLine(cx, cy, minute_x, minute_y, 2.0f, radar::kColorLabel);
+  
+  // Draw second hand (long, thin, red)
+  uint16_t second_color = tft.color565(255, 0, 0);  // Red for second hand
+  int second_len = (radius * 8) / 10;
+  int second_x = cx + static_cast<int>(cosf(second_angle) * second_len);
+  int second_y = cy + static_cast<int>(sinf(second_angle) * second_len);
+  s_draw->drawWideLine(cx, cy, second_x, second_y, 1.0f, second_color);
+}
+
 template <typename Gfx>
 void drawStaticGrid(Gfx& gfx) {
   initLabelMetrics();
@@ -673,11 +747,42 @@ bool ensureFrameSprite() {
 // sprite, then blit it to the panel in a single pushSprite. Because the panel
 // is updated in one pass, labels never show an erase/redraw gap — no flicker.
 void renderFrame() {
-  drawStaticGrid(s_frame);  // opens its own DrawScope(s_frame)
-  {
-    const DrawScope scope(s_frame);
-    drawAircraft();
+  // Check if we should show clock instead of radar
+  const size_t aircraft_count = services::adsb::aircraftCount();
+  
+  if (aircraft_count == 0) {
+    // Show clock when no aircraft
+    s_show_clock_mode = true;
+    
+    // Draw clock background
+    s_frame.fillScreen(radar::kColorBackground);
+    
+    // Get local time and draw clock
+    time_t utc_time = timeSync_getUnixTime();
+    time_t local_time = tzCalc_getLocalTimeFromCache(utc_time);
+    
+    // Check if this is a new second for animation
+    static time_t last_second = 0;
+    bool tick_second = (local_time != last_second);
+    if (tick_second) {
+      last_second = local_time;
+    }
+    
+    {
+      const DrawScope scope(s_frame);
+      drawClockFace(radar::kCenterX, radar::kCenterY, radar::kGridOuterRadius, 
+                    local_time, tick_second);
+    }
+  } else {
+    // Show radar when aircraft are present
+    s_show_clock_mode = false;
+    drawStaticGrid(s_frame);  // opens its own DrawScope(s_frame)
+    {
+      const DrawScope scope(s_frame);
+      drawAircraft();
+    }
   }
+  
   s_frame.pushSprite(0, 0);
   tft.setTextDatum(textdatum_t::top_left);
 }
