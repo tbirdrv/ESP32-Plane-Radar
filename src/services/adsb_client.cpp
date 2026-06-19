@@ -15,12 +15,19 @@ namespace {
 
 constexpr char kApiBase[] = "https://opendata.adsb.fi/api/v3/lat/";
 constexpr float kKmPerNm = 1.852f;
-constexpr int kConnectAttemptMs = 200;
-constexpr unsigned long kRequestTimeoutMs = 10000;
+constexpr int kConnectAttemptMs = 1500;
+constexpr unsigned long kRequestTimeoutMs = 2500;
+constexpr uint8_t kRequestRetryCount = 3;
+constexpr unsigned long kRetryDelayMs = 250;
+constexpr int kTlsHandshakeTimeoutSec = 3;
+// Skip TLS entirely if free heap is below this threshold to avoid alloc failures.
+constexpr uint32_t kMinHeapForTlsBytes = 55000;
 
 Aircraft s_aircraft[kMaxAircraft];
 size_t s_aircraft_count = 0;
 PollFn s_poll_fn = nullptr;
+unsigned long s_next_fetch_allowed_ms = 0;
+uint8_t s_consecutive_fetch_failures = 0;
 
 void pollNetwork() {
   if (s_poll_fn != nullptr) {
@@ -28,61 +35,30 @@ void pollNetwork() {
   }
 }
 
-int performGetWithPoll(HTTPClient& http) {
-  http.setConnectTimeout(kConnectAttemptMs);
-  const unsigned long deadline = millis() + kRequestTimeoutMs;
-  while (millis() < deadline) {
-    pollNetwork();
-    const int code = http.GET();
-    if (code > 0) {
-      return code;
-    }
-    if (code != HTTPC_ERROR_CONNECTION_REFUSED &&
-        code != HTTPC_ERROR_NOT_CONNECTED) {
-      return code;
-    }
-    delay(5);
+void registerFetchFailure() {
+  if (s_consecutive_fetch_failures < 6) {
+    ++s_consecutive_fetch_failures;
   }
-  return HTTPC_ERROR_READ_TIMEOUT;
+  unsigned long backoff_ms = 1000UL << s_consecutive_fetch_failures;
+  if (backoff_ms > 30000UL) {
+    backoff_ms = 30000UL;
+  }
+  s_next_fetch_allowed_ms = millis() + backoff_ms;
 }
 
-bool readResponseBodyWithPoll(HTTPClient& http, String& payload) {
-  WiFiClient* stream = http.getStreamPtr();
-  if (stream == nullptr) {
-    return false;
-  }
+void registerFetchSuccess() {
+  s_consecutive_fetch_failures = 0;
+  s_next_fetch_allowed_ms = 0;
+}
 
-  const int content_length = http.getSize();
-  if (content_length > 0) {
-    payload.reserve(static_cast<unsigned>(content_length + 1));
-  }
-
-  uint8_t buffer[512];
-  const unsigned long deadline = millis() + kRequestTimeoutMs;
-  while (millis() < deadline) {
-    pollNetwork();
-    const int available = stream->available();
-    if (available > 0) {
-      const int to_read =
-          available > static_cast<int>(sizeof(buffer)) ? static_cast<int>(sizeof(buffer))
-                                                       : available;
-      const int read_bytes = stream->readBytes(buffer, to_read);
-      if (read_bytes > 0) {
-        payload.concat(reinterpret_cast<const char*>(buffer),
-                       static_cast<unsigned>(read_bytes));
-      }
-    }
-    if (content_length > 0 &&
-        static_cast<int>(payload.length()) >= content_length) {
-      break;
-    }
-    if (!http.connected() && stream->available() <= 0) {
-      break;
-    }
-    delay(1);
-  }
-
-  return payload.length() > 0;
+void printPayloadPreview(const String& payload) {
+  const size_t max_preview = 160;
+  const size_t n = payload.length() < max_preview ? payload.length() : max_preview;
+  String preview = payload.substring(0, n);
+  preview.replace('\n', ' ');
+  preview.replace('\r', ' ');
+  Serial.printf("adsb: payload preview (%u bytes): %s\n",
+                static_cast<unsigned>(n), preview.c_str());
 }
 
 float kmToNauticalMiles(float km) { return km / kKmPerNm; }
@@ -206,6 +182,12 @@ size_t aircraftCount() { return s_aircraft_count; }
 const Aircraft* aircraftList() { return s_aircraft; }
 
 bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
+  const unsigned long now = millis();
+  if (s_next_fetch_allowed_ms != 0 &&
+      static_cast<long>(now - s_next_fetch_allowed_ms) < 0) {
+    return false;
+  }
+
   const float dist_nm = kmToNauticalMiles(fetch_radius_km);
 
   String url = kApiBase;
@@ -215,35 +197,79 @@ bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
   url += "/dist/";
   url += String(dist_nm, 1);
 
-  WiFiClientSecure client;
-  client.setInsecure();
-
-  HTTPClient http;
-  if (!http.begin(client, url)) {
-    Serial.println("adsb: http.begin failed");
-    return false;
-  }
-
-  http.setTimeout(kRequestTimeoutMs);
-  const int code = performGetWithPoll(http);
-  if (code != HTTP_CODE_OK) {
-    Serial.printf("adsb: HTTP %d\n", code);
-    http.end();
-    return false;
-  }
-
   String payload;
-  if (!readResponseBodyWithPoll(http, payload)) {
-    Serial.println("adsb: empty response");
-    http.end();
+  int last_code = HTTPC_ERROR_CONNECTION_REFUSED;
+  for (uint8_t attempt = 1; attempt <= kRequestRetryCount; ++attempt) {
+    pollNetwork();
+
+    if (WiFi.status() != WL_CONNECTED) {
+      last_code = HTTPC_ERROR_CONNECTION_LOST;
+      if (attempt < kRequestRetryCount) {
+        delay(kRetryDelayMs);
+      }
+      continue;
+    }
+    if (ESP.getFreeHeap() < kMinHeapForTlsBytes) {
+      Serial.printf("adsb: skipping TLS — low heap (%u bytes)\n", ESP.getFreeHeap());
+      last_code = HTTPC_ERROR_CONNECTION_REFUSED;
+      break;  // no point retrying, heap won't recover mid-loop
+    }
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(kRequestTimeoutMs);
+    client.setHandshakeTimeout(kTlsHandshakeTimeoutSec);
+
+    HTTPClient http;
+    if (!http.begin(client, url)) {
+      last_code = HTTPC_ERROR_CONNECTION_REFUSED;
+      if (attempt < kRequestRetryCount) {
+        delay(kRetryDelayMs);
+      }
+      continue;
+    }
+
+    http.addHeader("Accept", "application/json");
+    http.addHeader("Accept-Encoding", "identity");
+    http.setUserAgent("ESP32-Plane-Radar/1.0");
+    http.setReuse(false);
+    http.setConnectTimeout(kConnectAttemptMs);
+    http.setTimeout(kRequestTimeoutMs);
+    const int code = http.GET();
+    last_code = code;
+    if (code == HTTP_CODE_OK) {
+      // Use HTTPClient body reader so chunked transfer encoding is decoded properly.
+      payload = http.getString();
+      http.end();
+      if (payload.length() > 0) {
+        break;
+      }
+      last_code = HTTPC_ERROR_READ_TIMEOUT;
+    } else {
+      http.end();
+    }
+
+    if (attempt < kRequestRetryCount) {
+      delay(kRetryDelayMs);
+    }
+  }
+
+  if (payload.length() == 0) {
+    Serial.printf("adsb: HTTP %d\n", last_code);
+    registerFetchFailure();
     return false;
   }
-  http.end();
 
   JsonDocument doc;
   const DeserializationError err = deserializeJson(doc, payload);
   if (err) {
     Serial.printf("adsb: JSON parse error: %s\n", err.c_str());
+    printPayloadPreview(payload);
+    // IncompleteInput means network was fine but response was truncated server-side.
+    // Don't back off exponentially — just skip this poll cycle.
+    if (err.code() != DeserializationError::IncompleteInput) {
+      registerFetchFailure();
+    }
     return false;
   }
 
@@ -275,6 +301,7 @@ bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
   }
 
   s_aircraft_count = n;
+  registerFetchSuccess();
   Serial.printf("adsb: %u aircraft\n", static_cast<unsigned>(n));
   return true;
 }

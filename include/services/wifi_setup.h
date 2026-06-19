@@ -7,6 +7,8 @@ void wifiResetCredentialsAndReboot();
 bool wifiSetupConnect();
 /** Reconnect using saved creds; never opens the captive portal. */
 bool wifiReconnect();
+/** True when the Wi-Fi manager portal/web server is currently active. */
+bool wifiPortalActive();
 /** Keeps the LAN config portal alive; call every loop() iteration. */
 void wifiLoop();
 bool wifiBootButtonPressed();

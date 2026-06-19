@@ -7,11 +7,29 @@ static double cached_lat = 41.7401;   // Default: Toledo, OH
 static double cached_lon = -83.6491;
 
 int32_t tzCalc_getUTCOffset(double lat, double lon) {
-  // Simple formula: UTC offset = floor(longitude / 15.0) hours
-  // This gives rough approximations:
-  //   -180° = UTC-12, -165° = UTC-11, ..., 0° = UTC+0, ..., 180° = UTC+12
-  
-  int32_t offset_hours = (int32_t)floor(lon / 15.0);
+  // Civil time zones do not strictly follow 15-degree longitude bands.
+  // Use a simple contiguous-US heuristic first (most common deployment),
+  // then fall back to longitude-based rounding for the rest of the world.
+  int32_t offset_hours = 0;
+
+  const bool in_contiguous_us =
+      (lat >= 24.0 && lat <= 50.0 && lon >= -125.0 && lon <= -66.0);
+  if (in_contiguous_us) {
+    // Approximate U.S. political timezone boundaries (standard time).
+    // This avoids common 1-hour errors around places like Northwest Ohio.
+    if (lon >= -85.0) {
+      offset_hours = -5;  // Eastern
+    } else if (lon >= -104.0) {
+      offset_hours = -6;  // Central
+    } else if (lon >= -114.0) {
+      offset_hours = -7;  // Mountain
+    } else {
+      offset_hours = -8;  // Pacific
+    }
+  } else {
+    // Fallback: nearest 15-degree timezone hour.
+    offset_hours = (int32_t)lround(lon / 15.0);
+  }
   
   // Clamp to ±12 hours
   if (offset_hours > 12) offset_hours = 12;

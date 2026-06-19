@@ -45,15 +45,22 @@ namespace {
 bool s_label_metrics_ready = false;
 bool s_cardinal_use_vlw = false;
 bool s_scale_use_vlw = false;
+bool s_clock_use_vlw = false;
 float s_cardinal_vlw_size = 0.56f;
 float s_scale_vlw_size = 0.50f;
+float s_clock_vlw_size = 1.12f;
 float s_tag_vlw_size = 0.56f;
 const lgfx::GFXfont* s_cardinal_gfx = &fonts::FreeSansBold12pt7b;
 const lgfx::GFXfont* s_scale_gfx = &fonts::FreeSansBold9pt7b;
+const lgfx::GFXfont* s_clock_gfx = &fonts::FreeSansBold18pt7b;
 const lgfx::GFXfont* s_tag_gfx = &fonts::FreeSansBold12pt7b;
 
 bool s_tag_label_metrics_ready = false;
 bool s_tag_use_vlw = false;
+
+int s_clock_ac_last_x = radar::kCenterX;
+int s_clock_ac_last_y = radar::kCenterY;
+bool s_clock_ac_has_last_pos = false;
 
 int s_scale_label_max_w = 0;
 int s_scale_label_h = 0;
@@ -129,6 +136,10 @@ void initLabelMetrics() {
     const int scale_target = cardinal_h - radar::kScaleBelowCardinalPx;
     s_scale_use_vlw = true;
     s_scale_vlw_size = findVlwSizeForHeight(scale_target);
+
+    const int clock_target = cardinal_target * 2;
+    s_clock_use_vlw = true;
+    s_clock_vlw_size = findVlwSizeForHeight(clock_target);
   } else {
     const lgfx::GFXfont* cardinal_candidates[] = {&fonts::FreeSansBold12pt7b,
                                                   &fonts::FreeSansBold9pt7b};
@@ -142,6 +153,13 @@ void initLabelMetrics() {
                                                &fonts::FreeSansBold12pt7b};
     s_scale_gfx = pickGfxFontClosest(scale_target, scale_candidates, 2);
     s_scale_use_vlw = false;
+
+    const int clock_target = cardinal_target * 2;
+    const lgfx::GFXfont* clock_candidates[] = {&fonts::FreeSansBold24pt7b,
+                                               &fonts::FreeSansBold18pt7b,
+                                               &fonts::FreeSansBold12pt7b};
+    s_clock_gfx = pickGfxFontClosest(clock_target, clock_candidates, 3);
+    s_clock_use_vlw = false;
   }
 
   applyScaleStyle();
@@ -275,8 +293,8 @@ bool beyondRingEdgeDotFromLatLon(float lat, float lon, int* out_x, int* out_y) {
 }
 
 void drawBeyondRingDot(int x, int y) {
-  s_draw->fillSmoothCircle(x, y, radar::kBeyondRingDotRadiusPx,
-                           radar::kColorAircraft);
+  s_draw->fillCircle(x, y, radar::kBeyondRingDotRadiusPx,
+                     radar::kColorAircraft);
 }
 
 void clipPointToOuterRing(int x0, int y0, int* x1, int* y1) {
@@ -566,6 +584,14 @@ void applyScaleStyle() {
   }
 }
 
+void applyClockNumberStyle() {
+  if (s_clock_use_vlw) {
+    displayFontSetSmoothSize(*s_draw, s_clock_vlw_size);
+  } else {
+    displayFontSetBitmap(*s_draw, s_clock_gfx);
+  }
+}
+
 void drawCardinalLabel(const char* text, int x, int y, textdatum_t datum) {
   applyCardinalStyle();
   s_draw->setTextDatum(datum);
@@ -617,7 +643,7 @@ void drawCrosshairs(int cx, int cy, int radius, uint16_t color) {
 }
 
 void drawCenterDot(int cx, int cy) {
-  s_draw->fillSmoothCircle(cx, cy, radar::kCenterDotRadius, radar::kColorCenter);
+  s_draw->fillCircle(cx, cy, radar::kCenterDotRadius, radar::kColorCenter);
 }
 
 void drawCardinalLabels() {
@@ -632,6 +658,72 @@ void drawCardinalLabels() {
   drawCardinalLabel("E", edge, cy, textdatum_t::middle_right);
 }
 
+void drawTimeEdgeMarkers(int cx, int cy, int outer_radius) {
+  if (!radar::radarOnlyModeEnabled()) {
+    return;
+  }
+
+  const time_t utc_time = timeSync_getUnixTime();
+  const time_t local_time = tzCalc_getLocalTimeFromCache(utc_time);
+  struct tm* tm_info = localtime(&local_time);
+  if (tm_info == nullptr) {
+    return;
+  }
+
+  const int hours = tm_info->tm_hour;
+  const int minutes = tm_info->tm_min;
+  const int seconds = tm_info->tm_sec;
+
+  // Clock angles with 12 at top.
+  const float hour_deg = (hours % 12 + minutes / 60.0f) * 30.0f;
+  const float minute_deg = minutes * 6.0f;
+  const float second_deg = seconds * 6.0f;
+
+  const float kPi = 3.14159265359f;
+  const auto markerPos = [&](float deg, int* out_x, int* out_y) {
+    const float a = (deg - 90.0f) * kPi / 180.0f;
+    const int marker_r = outer_radius - 4;
+    int x = cx + static_cast<int>(cosf(a) * marker_r);
+    int y = cy + static_cast<int>(sinf(a) * marker_r);
+
+    // Keep text safely visible at the panel edge.
+    if (x < 8) x = 8;
+    if (x > radar::kSize - 9) x = radar::kSize - 9;
+    if (y < 8) y = 8;
+    if (y > radar::kSize - 9) y = radar::kSize - 9;
+
+    *out_x = x;
+    *out_y = y;
+  };
+
+  int hx = 0;
+  int hy = 0;
+  int mx = 0;
+  int my = 0;
+  markerPos(hour_deg, &hx, &hy);
+  markerPos(minute_deg, &mx, &my);
+
+  if (s_cardinal_use_vlw) {
+    displayFontSetSmoothSize(*s_draw, s_cardinal_vlw_size * 1.5f);
+  } else {
+    displayFontSetBitmap(*s_draw, &fonts::FreeSansBold18pt7b);
+  }
+  s_draw->setTextDatum(textdatum_t::middle_center);
+  const uint16_t hm_color = config::kDisplayRgbOrder
+                                ? tft.color565(255, 160, 80)
+                                : tft.color565(80, 160, 255);
+  s_draw->setTextColor(hm_color, radar::kColorBackground);
+  s_draw->drawString("H", hx, hy);
+  s_draw->drawString("M", mx, my);
+
+  // Radar-only mode: show seconds as a single moving dot on the outer dial.
+  int sx = 0;
+  int sy = 0;
+  markerPos(second_deg, &sx, &sy);
+  const uint16_t sec_color = tft.color565(255, 0, 0);
+  s_draw->fillCircle(sx, sy, radar::kCenterDotRadius, sec_color);
+}
+
 int scaleLabelAnchorX(int cx, int outer_radius) {
   return cx + outer_radius - radar::kScaleGapFromOuterRing;
 }
@@ -644,8 +736,36 @@ void drawScaleLabel(int cx, int cy, int outer_radius) {
 }
 
 // Draw a 12-digit clock face with hour/minute/second hands
-void drawClockFace(int cx, int cy, int radius, time_t localTime, bool tickSecond) {
+void drawClockFace(int cx, int cy, int radius, time_t localTime, bool tickSecond,
+                   size_t aircraft_count) {
   const DrawScope scope(*s_draw);
+  (void)tickSecond;
+
+  auto pointToSegmentDistance = [](float px, float py, float x1, float y1,
+                                   float x2, float y2) -> float {
+    const float vx = x2 - x1;
+    const float vy = y2 - y1;
+    const float wx = px - x1;
+    const float wy = py - y1;
+    const float c1 = wx * vx + wy * vy;
+    if (c1 <= 0.0f) {
+      const float dx = px - x1;
+      const float dy = py - y1;
+      return sqrtf(dx * dx + dy * dy);
+    }
+    const float c2 = vx * vx + vy * vy;
+    if (c2 <= c1) {
+      const float dx = px - x2;
+      const float dy = py - y2;
+      return sqrtf(dx * dx + dy * dy);
+    }
+    const float t = c1 / c2;
+    const float proj_x = x1 + t * vx;
+    const float proj_y = y1 + t * vy;
+    const float dx = px - proj_x;
+    const float dy = py - proj_y;
+    return sqrtf(dx * dx + dy * dy);
+  };
   
   // Extract hours, minutes, seconds from local time
   struct tm *tm_info = localtime(&localTime);
@@ -654,18 +774,18 @@ void drawClockFace(int cx, int cy, int radius, time_t localTime, bool tickSecond
   int seconds = tm_info->tm_sec;
   
   // Draw clock background circle
-  s_draw->fillSmoothCircle(cx, cy, radius, radar::kColorBackground);
-  s_draw->drawSmoothCircle(cx, cy, radius, radar::kColorGrid);
+  s_draw->fillCircle(cx, cy, radius, radar::kColorBackground);
+  s_draw->drawCircle(cx, cy, radius, radar::kColorGrid);
   
   // Draw 12 hour markers and digits
-  applyCardinalStyle();
+  applyClockNumberStyle();
   s_draw->setTextColor(radar::kColorLabel, radar::kColorBackground);
   s_draw->setTextDatum(textdatum_t::middle_center);
   
   const float kPi = 3.14159265359f;
   for (int i = 1; i <= 12; ++i) {
     const float angle_rad = (i - 3) * kPi / 6.0f;  // -3 to rotate 12 to top
-    const int marker_radius = radius - 12;
+    const int marker_radius = radius - 24;
     const int x = cx + static_cast<int>(cosf(angle_rad) * marker_radius);
     const int y = cy + static_cast<int>(sinf(angle_rad) * marker_radius);
     
@@ -708,6 +828,123 @@ void drawClockFace(int cx, int cy, int radius, time_t localTime, bool tickSecond
   int second_x = cx + static_cast<int>(cosf(second_angle) * second_len);
   int second_y = cy + static_cast<int>(sinf(second_angle) * second_len);
   s_draw->drawWideLine(cx, cy, second_x, second_y, 1.0f, second_color);
+
+  // Show current aircraft count while clock is visible (only when non-zero).
+  if (aircraft_count > 0) {
+    applyClockNumberStyle();
+    s_draw->setTextColor(radar::kColorLabel, radar::kColorBackground);
+    s_draw->setTextDatum(textdatum_t::middle_center);
+    char count_label[16];
+    snprintf(count_label, sizeof(count_label), "AC: %u",
+             static_cast<unsigned>(aircraft_count));
+
+    const int label_w = s_draw->textWidth(count_label);
+    const int label_h = s_draw->fontHeight();
+    const float label_r = 0.5f * sqrtf(static_cast<float>(label_w * label_w +
+                                                           label_h * label_h));
+    const int marker_radius = radius - 24;
+    const float digit_clearance = label_r + (label_h * 0.9f);
+
+    auto minDistanceToClockDigits = [&](int lx, int ly) -> float {
+      float best = 1e9f;
+      for (int i = 1; i <= 12; ++i) {
+        const float da = (i - 3) * kPi / 6.0f;
+        const int dx = cx + static_cast<int>(cosf(da) * marker_radius);
+        const int dy = cy + static_cast<int>(sinf(da) * marker_radius);
+        const float ddx = static_cast<float>(lx - dx);
+        const float ddy = static_cast<float>(ly - dy);
+        const float d = sqrtf(ddx * ddx + ddy * ddy);
+        if (d < best) {
+          best = d;
+        }
+      }
+      return best;
+    };
+
+    // Keep label closer to the center than before, then choose the position
+    // with the best clearance from hour/minute hands.
+    const float orbit_r = radius * 0.58f;
+    const float candidate_deg[] = {90.0f, 120.0f, 60.0f, 150.0f, 30.0f,
+                                   180.0f, 0.0f, 240.0f, 300.0f};
+
+    int best_x = cx;
+    int best_y = cy + static_cast<int>(orbit_r);
+    float best_score = -1.0f;
+
+    for (float deg : candidate_deg) {
+      const float a = deg * kPi / 180.0f;
+      const int lx = cx + static_cast<int>(cosf(a) * orbit_r);
+      const int ly = cy + static_cast<int>(sinf(a) * orbit_r);
+
+      // Ensure label box stays inside the dial area.
+      const float edge_dist = sqrtf(static_cast<float>((lx - cx) * (lx - cx) +
+                                                        (ly - cy) * (ly - cy)));
+      if (edge_dist + label_r > static_cast<float>(radius - 4)) {
+        continue;
+      }
+
+      const float d_digits = minDistanceToClockDigits(lx, ly);
+      if (d_digits < digit_clearance) {
+        continue;
+      }
+
+      const float d_hour = pointToSegmentDistance(static_cast<float>(lx),
+                                                  static_cast<float>(ly),
+                                                  static_cast<float>(cx),
+                                                  static_cast<float>(cy),
+                                                  static_cast<float>(hour_x),
+                                                  static_cast<float>(hour_y));
+      const float d_min = pointToSegmentDistance(static_cast<float>(lx),
+                                                 static_cast<float>(ly),
+                                                 static_cast<float>(cx),
+                                                 static_cast<float>(cy),
+                                                 static_cast<float>(minute_x),
+                                                 static_cast<float>(minute_y));
+      const float d_hands = d_hour < d_min ? d_hour : d_min;
+      const float score = d_hands < d_digits ? d_hands : d_digits;
+      if (score > best_score) {
+        best_score = score;
+        best_x = lx;
+        best_y = ly;
+      }
+    }
+
+    // Hysteresis: keep previous position unless a new one is significantly better.
+    if (s_clock_ac_has_last_pos) {
+      const float last_d_hour = pointToSegmentDistance(
+          static_cast<float>(s_clock_ac_last_x), static_cast<float>(s_clock_ac_last_y),
+          static_cast<float>(cx), static_cast<float>(cy), static_cast<float>(hour_x),
+          static_cast<float>(hour_y));
+      const float last_d_min = pointToSegmentDistance(
+          static_cast<float>(s_clock_ac_last_x), static_cast<float>(s_clock_ac_last_y),
+          static_cast<float>(cx), static_cast<float>(cy), static_cast<float>(minute_x),
+          static_cast<float>(minute_y));
+        const float last_d_hands = last_d_hour < last_d_min ? last_d_hour : last_d_min;
+        const float last_d_digits =
+          minDistanceToClockDigits(s_clock_ac_last_x, s_clock_ac_last_y);
+        const float last_score =
+          last_d_hands < last_d_digits ? last_d_hands : last_d_digits;
+
+      constexpr float kSwitchImprovePx = 10.0f;
+      if (best_score < (last_score + kSwitchImprovePx)) {
+        best_x = s_clock_ac_last_x;
+        best_y = s_clock_ac_last_y;
+      }
+    }
+
+    if (best_score < 0.0f) {
+      best_x = cx;
+      best_y = cy + (radius * 34) / 100;
+    }
+
+    s_clock_ac_last_x = best_x;
+    s_clock_ac_last_y = best_y;
+    s_clock_ac_has_last_pos = true;
+
+    s_draw->drawString(count_label, best_x, best_y);
+  } else {
+    s_clock_ac_has_last_pos = false;
+  }
 }
 
 template <typename Gfx>
@@ -726,6 +963,7 @@ void drawStaticGrid(Gfx& gfx) {
   runway::drawLargeAirportRunways(gfx);
   drawCenterDot(cx, cy);
   drawCardinalLabels();
+  drawTimeEdgeMarkers(cx, cy, grid_r);
   drawScaleLabel(cx, cy, grid_r);
   gfx.setTextDatum(textdatum_t::top_left);
 }
@@ -747,19 +985,24 @@ bool ensureFrameSprite() {
 // sprite, then blit it to the panel in a single pushSprite. Because the panel
 // is updated in one pass, labels never show an erase/redraw gap — no flicker.
 void renderFrame() {
-  // Check if we should show clock instead of radar
   const size_t aircraft_count = services::adsb::aircraftCount();
+  const bool radar_only_mode = radar::radarOnlyModeEnabled();
+  const bool clock_only_mode = radar::clockOnlyModeEnabled() && !radar_only_mode;
+  const uint8_t minute_window_sec = radar::clockMinuteWindowSec();
+  const time_t utc_time = timeSync_getUnixTime();
+  const time_t local_time = tzCalc_getLocalTimeFromCache(utc_time);
+  struct tm* tm_info = localtime(&local_time);
+  const bool minute_clock_window =
+      (minute_window_sec > 0 && tm_info != nullptr && tm_info->tm_sec < minute_window_sec);
+  const bool show_clock = !radar_only_mode &&
+                          (clock_only_mode || (aircraft_count == 0) || minute_clock_window);
   
-  if (aircraft_count == 0) {
-    // Show clock when no aircraft
+  if (show_clock) {
+    // Show clock when no aircraft or during the configured minute window.
     s_show_clock_mode = true;
     
     // Draw clock background
     s_frame.fillScreen(radar::kColorBackground);
-    
-    // Get local time and draw clock
-    time_t utc_time = timeSync_getUnixTime();
-    time_t local_time = tzCalc_getLocalTimeFromCache(utc_time);
     
     // Check if this is a new second for animation
     static time_t last_second = 0;
@@ -771,7 +1014,7 @@ void renderFrame() {
     {
       const DrawScope scope(s_frame);
       drawClockFace(radar::kCenterX, radar::kCenterY, radar::kGridOuterRadius, 
-                    local_time, tick_second);
+                    local_time, tick_second, aircraft_count);
     }
   } else {
     // Show radar when aircraft are present

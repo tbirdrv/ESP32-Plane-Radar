@@ -19,6 +19,7 @@ public:
       cfg.pin_sclk = static_cast<int>(config::kDisplayPinSclk);
       cfg.pin_mosi = static_cast<int>(config::kDisplayPinMosi);
       cfg.pin_miso = -1;
+      cfg.spi_3wire = true;
       cfg.pin_dc = static_cast<int>(config::kDisplayPinDc);
       _bus.config(cfg);
       _panel.setBus(&_bus);

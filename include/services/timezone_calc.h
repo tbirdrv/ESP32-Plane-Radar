@@ -5,8 +5,8 @@
 
 /**
  * Calculate UTC offset (in seconds) based on latitude and longitude
- * Uses simple formula: UTC offset = floor(longitude / 15.0) * 3600
- * Result is clamped to ±12 hours
+ * Uses a contiguous-US heuristic first, then falls back to longitude rounding.
+ * Result is clamped to ±12 hours.
  * 
  * @param lat Latitude in degrees (-90 to +90, positive = North)
  * @param lon Longitude in degrees (-180 to +180, positive = East)

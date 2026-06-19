@@ -18,6 +18,10 @@ constexpr unsigned long kWifiConnectAttemptMs = 15000;
 constexpr uint8_t kWifiConnectAttempts = 3;
 constexpr unsigned long kWifiPortalTimeoutSec = 0;  // 0 = no timeout while configuring
 constexpr unsigned long kWifiConnectingFrameMs = 50;
+/** Filter APs shown on /wifi by quality percent (0-100). ~60 ~= 3-4 bars. */
+constexpr int kWifiScanMinQualityPct = 60;
+/** Run portal as AP-only (no STA) for maximum AP stability on low-memory C3. */
+constexpr bool kWifiPortalApOnly = true;
 /** Wait after disconnect before reconnecting (avoids portal on brief drops). */
 constexpr unsigned long kWifiDownGraceMs = 4000;
 /** Minimum interval between background reconnect tries. */

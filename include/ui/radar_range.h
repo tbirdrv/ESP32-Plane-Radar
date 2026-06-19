@@ -47,9 +47,18 @@ float fetchRadiusKm();
 
 bool useMiles();
 bool showRunways();
+uint8_t clockMinuteWindowSec();
+bool lanPortalEnabled();
+bool clockOnlyModeEnabled();
+bool radarOnlyModeEnabled();
 /** WiFi portal checkbox: "T" = miles, otherwise km. */
 void saveMilesFromPortal(const char* checkbox_value);
 void saveRunwaysFromPortal(const char* checkbox_value);
+/** WiFi portal numeric field: seconds (0-59) for per-minute clock window. */
+void saveClockMinuteWindowSecFromPortal(const char* seconds_value);
+void saveLanPortalEnabledFromPortal(const char* checkbox_value);
+void saveClockOnlyModeFromPortal(const char* checkbox_value);
+void saveRadarOnlyModeFromPortal(const char* checkbox_value);
 void formatRing3Label(char* buf, size_t len, float ring3_km, bool use_miles);
 void formatCurrentRing3Label(char* buf, size_t len);
 /** Reset distance units to km (e.g. with WiFi credential wipe). */
