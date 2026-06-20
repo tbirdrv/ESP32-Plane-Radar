@@ -125,7 +125,7 @@ void onPortalWebServerReady() {
         "<h1>Plane Radar Setup</h1>"
         "<p>Choose an action:</p>"
         "<a href='/param'>Device Settings</a>"
-        "<a href='/0wifi'>WiFi Settings</a>"
+        "<a href='/wifi_ap'>WiFi Settings</a>"
         "<a class='secondary' href='/info'>Status</a>"
         "<small>To change Wi-Fi network, connect to the<br>"
         "<b>PlaneRadar-Setup</b> AP and open 192.168.4.1</small>"
@@ -140,7 +140,8 @@ void onPortalWebServerReady() {
     if (s_wm.server == nullptr) {
       return;
     }
-    s_wm.server->sendHeader("Location", "/0wifi", true);
+    // In setup AP mode, open WiFiManager's built-in Wi-Fi page directly.
+    s_wm.server->sendHeader("Location", "/wifi", true);
     s_wm.server->send(302, "text/plain", "");
   };
   s_wm.server->on("/wifi_ap", HTTP_GET, switch_to_wifi_ap_only);
@@ -560,15 +561,16 @@ bool tryConnectWithUi(const String& ssid, const String& pass, bool show_ui) {
   }
 
   for (uint8_t attempt = 1; attempt <= config::kWifiConnectAttempts; ++attempt) {
-    // Always reset the STA state before each manual attempt. This prevents
-    // begin() from failing with "sta is connecting" after a prior failed try.
+    // Fast path on first attempt: do not reset STA state first, which helps
+    // reconnect quicker after brief link drops.
     if (attempt > 1) {
       Serial.printf("WiFi connect retry %u/%u\n", attempt,
                     config::kWifiConnectAttempts);
+      // For later attempts, force a clean radio state to improve reliability.
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      delay(400);
     }
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-    delay(400);
 
     startStaConnect(ssid, pass);
 
@@ -588,13 +590,17 @@ bool connectSavedNetwork(bool show_ui) {
 
   ensureWifiManager();
   const String ssid = s_wm.getWiFiSSID();
-  if (ssid.length() == 0) {
+  if (ssid.length() > 0) {
+    const String pass = s_wm.getWiFiPass();
+    Serial.printf("Trying saved Wi-Fi network '%s'\n", ssid.c_str());
+    if (tryConnectWithUi(ssid, pass, show_ui)) {
+      return true;
+    }
+    Serial.println("Saved SSID connect failed");
+  } else {
     Serial.println("WiFiManager has no saved SSID");
-    return false;
   }
-  const String pass = s_wm.getWiFiPass();
-  Serial.printf("Trying saved Wi-Fi network '%s'\n", ssid.c_str());
-  return tryConnectWithUi(ssid, pass, show_ui);
+  return false;
 }
 
 bool openConfigPortal() {
@@ -683,10 +689,15 @@ bool openConfigPortal() {
     }
     
     if (s_wm.process()) {
-      Serial.printf("[Portal] process() returned connected (save_seen=%d)\n",
-                    s_wifi_save_seen ? 1 : 0);
-      Serial.println("WiFiManager reported connected");
-      return wifiLinkUp();
+      const bool link_now = wifiLinkUp();
+      Serial.printf("[Portal] process() returned connected (save_seen=%d link_up=%d)\n",
+                    s_wifi_save_seen ? 1 : 0, link_now ? 1 : 0);
+      if (link_now) {
+        Serial.println("WiFiManager reported connected");
+        return true;
+      }
+      // Some AP/client interactions can cause process() to return true even
+      // though STA is not actually connected. Keep the portal alive.
     }
     if (wifiLinkUp()) {
       Serial.println("STA link is up; leaving setup portal loop");

@@ -19,11 +19,12 @@ namespace {
 
 constexpr char kApiBase[] = "https://opendata.adsb.fi/api/v3/lat/";
 constexpr float kKmPerNm = 1.852f;
-constexpr int kConnectAttemptMs = 4000;
-constexpr unsigned long kRequestTimeoutMs = 8000;
-constexpr uint8_t kRequestRetryCount = 3;
+// Keep failed HTTPS attempts short so the render loop stays responsive.
+constexpr int kConnectAttemptMs = 1200;
+constexpr unsigned long kRequestTimeoutMs = 2500;
+constexpr uint8_t kRequestRetryCount = 1;
 constexpr unsigned long kRetryDelayMs = 250;
-constexpr int kTlsHandshakeTimeoutSec = 8;
+constexpr int kTlsHandshakeTimeoutSec = 2;
 // Skip TLS entirely if free heap is below this threshold to avoid alloc failures.
 constexpr uint32_t kMinHeapForTlsBytes = 55000;
 // TLS on ESP32 also needs a sufficiently large contiguous block.
@@ -132,6 +133,19 @@ bool isOnGround(const JsonObject& plane) {
   return strcmp(plane["alt_baro"].as<const char*>(), "ground") == 0;
 }
 
+int32_t pickAltitudeFeet(const JsonObject& plane) {
+  if (isOnGround(plane)) {
+    return -1;
+  }
+
+  float alt = 0.0f;
+  if (readJsonFloat(plane, "alt_baro", &alt) ||
+      readJsonFloat(plane, "alt_geom", &alt)) {
+    return static_cast<int32_t>(lroundf(alt));
+  }
+  return -1;
+}
+
 void copyJsonStringTrimmed(const JsonObject& obj, const char* key, char* out,
                            size_t out_len) {
   out[0] = '\0';
@@ -177,6 +191,7 @@ void fillTagFields(Aircraft* ac, const JsonObject& plane) {
 
   copyJsonStringTrimmed(plane, "t", ac->type, sizeof(ac->type));
   formatAltitudeTag(plane, ac->alt, sizeof(ac->alt));
+  ac->alt_ft = pickAltitudeFeet(plane);
 }
 
 }  // namespace
@@ -318,6 +333,7 @@ bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
     s_aircraft[n].nose_deg = pickNoseHeading(plane);
     s_aircraft[n].track_deg = pickTrackHeading(plane);
     s_aircraft[n].gs_knots = pickGroundSpeed(plane);
+    s_aircraft[n].alt_ft = -1;
     fillTagFields(&s_aircraft[n], plane);
     ++n;
   }

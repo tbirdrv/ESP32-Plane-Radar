@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace services::adsb {
 
@@ -10,6 +11,7 @@ struct Aircraft {
   float nose_deg;
   float track_deg;
   float gs_knots;
+  int32_t alt_ft;
   char callsign[9];
   char type[5];
   char alt[12];

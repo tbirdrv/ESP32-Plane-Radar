@@ -52,7 +52,7 @@ void handleBootButton() {
   static uint8_t tap_count = 0;
   static unsigned long first_tap_ms = 0;
   const unsigned long now = millis();
-  constexpr unsigned long kTripleTapWindowMs = 2800;
+  constexpr unsigned long kTripleTapWindowMs = 1000;
 
   // If taps time out, treat them as normal range taps.
   if (tap_count > 0 && now - first_tap_ms > kTripleTapWindowMs) {

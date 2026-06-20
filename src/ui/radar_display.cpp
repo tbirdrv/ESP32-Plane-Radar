@@ -42,6 +42,60 @@ uint16_t kColorRunwayLabel = 0x7DFF;
 
 namespace {
 
+uint8_t lerpByte(uint8_t a, uint8_t b, float t) {
+  return static_cast<uint8_t>(lroundf(a + (b - a) * t));
+}
+
+uint16_t rgb565Lerp(uint8_t r1, uint8_t g1, uint8_t b1,
+                    uint8_t r2, uint8_t g2, uint8_t b2, float t) {
+  const uint8_t r = lerpByte(r1, r2, t);
+  const uint8_t g = lerpByte(g1, g2, t);
+  const uint8_t b = lerpByte(b1, b2, t);
+  // GC9A01 on this board has BGR panel order; swap R/B to match.
+  return config::kDisplayRgbOrder ? tft.color565(b, g, r) : tft.color565(r, g, b);
+}
+
+uint16_t altitudeColor(int32_t alt_ft) {
+  if (alt_ft < 0) {
+    return tft.color565(160, 160, 160);
+  }
+
+  // Shift by local field elevation so low-altitude nearby traffic remains cool.
+  constexpr int32_t kFieldElevationFt = 600;
+  constexpr int32_t kWarmStartAglFt = 8000;
+  constexpr int32_t kGreenTopAglFt = 18000;
+  constexpr int32_t kYellowTopAglFt = 30000;
+  constexpr int32_t kMaxAglFt = 40000;
+
+  int32_t agl_ft = alt_ft - kFieldElevationFt;
+  if (agl_ft < 0) {
+    agl_ft = 0;
+  }
+  if (agl_ft > kMaxAglFt) {
+    agl_ft = kMaxAglFt;
+  }
+
+  if (agl_ft <= kWarmStartAglFt) {
+    const float t = static_cast<float>(agl_ft) /
+                    static_cast<float>(kWarmStartAglFt);
+    return rgb565Lerp(0, 64, 255, 0, 255, 255, t);
+  }
+  if (agl_ft <= kGreenTopAglFt) {
+    const float t = static_cast<float>(agl_ft - kWarmStartAglFt) /
+                    static_cast<float>(kGreenTopAglFt - kWarmStartAglFt);
+    return rgb565Lerp(0, 255, 255, 0, 255, 0, t);
+  }
+  if (agl_ft <= kYellowTopAglFt) {
+    const float t = static_cast<float>(agl_ft - kGreenTopAglFt) /
+                    static_cast<float>(kYellowTopAglFt - kGreenTopAglFt);
+    return rgb565Lerp(0, 255, 0, 255, 255, 0, t);
+  }
+
+  const float t = static_cast<float>(agl_ft - kYellowTopAglFt) /
+                  static_cast<float>(kMaxAglFt - kYellowTopAglFt);
+  return rgb565Lerp(255, 255, 0, 255, 64, 0, t);
+}
+
 bool s_label_metrics_ready = false;
 bool s_cardinal_use_vlw = false;
 bool s_scale_use_vlw = false;
@@ -293,9 +347,8 @@ bool beyondRingEdgeDotFromLatLon(float lat, float lon, int* out_x, int* out_y) {
   return true;
 }
 
-void drawBeyondRingDot(int x, int y) {
-  s_draw->fillCircle(x, y, radar::kBeyondRingDotRadiusPx,
-                     radar::kColorAircraft);
+void drawBeyondRingDot(int x, int y, uint16_t color) {
+  s_draw->fillCircle(x, y, radar::kBeyondRingDotRadiusPx, color);
 }
 
 void clipPointToOuterRing(int x0, int y0, int* x1, int* y1) {
@@ -466,7 +519,7 @@ void drawAircraftTag(int x, int y, const services::adsb::Aircraft& plane) {
   ly += line_h;
 
   if (plane.alt[0] != '\0') {
-    s_draw->setTextColor(radar::kColorTagAltitude, radar::kColorBackground);
+    s_draw->setTextColor(altitudeColor(plane.alt_ft), radar::kColorBackground);
     s_draw->drawString(plane.alt, anchor_x, ly);
   }
 }
@@ -482,13 +535,22 @@ struct BeyondDotDrawItem {
   int x = 0;
   int y = 0;
   int dist_sq = 0;
+  int32_t alt_ft = -1;
 };
 
-void sortDrawItemsFarFirst(AircraftDrawItem* items, size_t count) {
+// Sort low-altitude first so higher aircraft are drawn on top.
+void sortDrawItemsLowAltFirst(AircraftDrawItem* items, size_t count,
+                               const services::adsb::Aircraft* planes) {
   for (size_t i = 1; i < count; ++i) {
     const AircraftDrawItem key = items[i];
+    const int32_t key_alt = planes[key.index].alt_ft;
     size_t j = i;
-    while (j > 0 && items[j - 1].dist_sq < key.dist_sq) {
+    while (j > 0) {
+      const int32_t prev_alt = planes[items[j - 1].index].alt_ft;
+      // Treat unknown alt (-1) as low so known-altitude planes draw on top.
+      if (prev_alt >= 0 && (key_alt < 0 || prev_alt <= key_alt)) {
+        break;
+      }
       items[j] = items[j - 1];
       --j;
     }
@@ -546,22 +608,24 @@ void drawAircraft() {
     dots[dot_count].x = dot_x;
     dots[dot_count].y = dot_y;
     dots[dot_count].dist_sq = distSqFromCenter(dot_x, dot_y);
+    dots[dot_count].alt_ft = planes[i].alt_ft;
     ++dot_count;
   }
 
   sortBeyondDotsFarFirst(dots, dot_count);
   for (size_t d = 0; d < dot_count; ++d) {
-    drawBeyondRingDot(dots[d].x, dots[d].y);
+    drawBeyondRingDot(dots[d].x, dots[d].y, altitudeColor(dots[d].alt_ft));
   }
 
-  sortDrawItemsFarFirst(items, draw_count);
+  sortDrawItemsLowAltFirst(items, draw_count, planes);
   for (size_t d = 0; d < draw_count; ++d) {
     const size_t i = items[d].index;
     const int x = items[d].x;
     const int y = items[d].y;
+    const uint16_t aircraft_color = altitudeColor(planes[i].alt_ft);
     drawSpeedVector(x, y, planes[i].nose_deg, planes[i].track_deg,
-                    planes[i].gs_knots, radar::kColorTrackVector);
-    drawHeadingTriangle(x, y, planes[i].nose_deg, radar::kColorAircraft);
+                    planes[i].gs_knots, aircraft_color);
+    drawHeadingTriangle(x, y, planes[i].nose_deg, aircraft_color);
   }
   for (size_t d = 0; d < draw_count; ++d) {
     const size_t i = items[d].index;

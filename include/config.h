@@ -25,7 +25,7 @@ constexpr bool kWifiPortalApOnly = true;
 /** Wait after disconnect before reconnecting (avoids portal on brief drops). */
 constexpr unsigned long kWifiDownGraceMs = 4000;
 /** Minimum interval between background reconnect tries. */
-constexpr unsigned long kWifiReconnectIntervalMs = 15000;
+constexpr unsigned long kWifiReconnectIntervalMs = 7000;
 
 // --- BOOT button (ESP32-C3 Super Mini, active LOW) ---
 constexpr gpio_num_t kBootPin = GPIO_NUM_9;
