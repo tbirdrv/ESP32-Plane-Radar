@@ -54,10 +54,34 @@ constexpr double kDefaultRadarLon = -83.6491;
 
 /** Poll adsb.fi (API public limit: 1 req/s). */
 constexpr unsigned long kAdsbFetchIntervalMs = 3000;
+
+// --- Aircraft altitude color gradient ---
+// All values in feet MSL / AGL as noted.
+/** Local field elevation (ft MSL). Subtracted before gradient is applied so
+ *  low-flying nearby traffic stays in cool colors. Tune to your site. */
+constexpr int32_t kAltGradFieldElevFt = 600;
+/** AGL threshold (ft) below which aircraft appear blue→cyan ("cool"). */
+constexpr int32_t kAltGradWarmStartAglFt = 8000;
+/** AGL threshold (ft) where cyan transitions to green. */
+constexpr int32_t kAltGradGreenTopAglFt = 18000;
+/** AGL threshold (ft) where green transitions to yellow. */
+constexpr int32_t kAltGradYellowTopAglFt = 30000;
+/** AGL ceiling (ft) — aircraft above this saturate at orange/red. */
+constexpr int32_t kAltGradMaxAglFt = 40000;
 /** Legacy scale unused — fetch uses radar::fetchRadiusKm() to screen edge. */
 constexpr float kAdsbFetchRadiusScale = 1.0f;
 /** false = hide aircraft with alt_baro "ground"; true = show them too. */
 constexpr bool kAdsbShowGroundAircraft = true;
+
+// --- Altitude color gradient (aircraft markers/tags) ---
+// Values are in feet. AGL-like thresholds are derived from:
+// reported altitude - kAltitudeColorFieldElevationFt.
+// Tune these for local deployment/elevation.
+constexpr int32_t kAltitudeColorFieldElevationFt = 600;
+constexpr int32_t kAltitudeColorWarmStartAglFt = 8000;
+constexpr int32_t kAltitudeColorGreenTopAglFt = 18000;
+constexpr int32_t kAltitudeColorYellowTopAglFt = 30000;
+constexpr int32_t kAltitudeColorMaxAglFt = 40000;
 
 // --- UI colors (RGB565) — status screens ---
 constexpr uint16_t kColorBlack = 0x0000;

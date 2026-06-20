@@ -1,0 +1,70 @@
+# Publish a rolling prerelease binary from main on every push.
+name: Prerelease
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prerelease-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prerelease:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+            .pio/libdeps
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Check airport data
+        run: python3 scripts/build_large_airports.py --check
+
+      - name: Build and merge
+        run: |
+          pio run -e supermini
+          pio run -t merge -e supermini
+
+      - name: Package prerelease files
+        run: |
+          mkdir -p dist
+          cp .pio/build/supermini/firmware-merged.bin dist/plane-radar-main-latest.bin
+          sha256sum dist/plane-radar-main-latest.bin > dist/plane-radar-main-latest.bin.sha256
+
+      - name: Publish rolling prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly-main
+          target_commitish: main
+          name: Prerelease (main)
+          prerelease: true
+          body: |
+            Auto-updated prerelease from `main`.
+
+            Commit: `${{ github.sha }}`
+          files: dist/*
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

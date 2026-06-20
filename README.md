@@ -1,8 +1,13 @@
 # Plane Radar
 
+[![Build](https://github.com/tbirdrv/ESP32-Plane-Radar/actions/workflows/build.yml/badge.svg)](https://github.com/tbirdrv/ESP32-Plane-Radar/actions/workflows/build.yml)
+[![Prerelease](https://img.shields.io/github/v/release/tbirdrv/ESP32-Plane-Radar?include_prereleases&label=prerelease)](https://github.com/tbirdrv/ESP32-Plane-Radar/releases/tag/nightly-main)
+
 <img width="800" height="450" alt="plane-radar" src="https://github.com/user-attachments/assets/716d0992-dab8-47ba-8f1a-2aec7f607419" />
 
-**3D printed case (STL + assembly):** [MakerWorld](https://makerworld.com/en/models/2872376-esp32-plane-radar-live-ads-b-on-a-round-display#profileId-3207083) · **Firmware:** [Releases](https://github.com/MatixYo/ESP32-Plane-Radar/releases)
+**3D printed case (STL + assembly):** [MakerWorld](https://makerworld.com/en/models/2872376-esp32-plane-radar-live-ads-b-on-a-round-display#profileId-3207083) · **Firmware:** [Releases](https://github.com/tbirdrv/ESP32-Plane-Radar/releases)
+
+**Repository:** [github.com/tbirdrv/ESP32-Plane-Radar](https://github.com/tbirdrv/ESP32-Plane-Radar)
 
 Firmware for an **ESP32-C3 Super Mini** and a **1.28″ round GC9A01** display (240×240). Shows a circular **ADS-B radar** around your configured location, with **WiFiManager** for first-time setup.
 
@@ -42,6 +47,7 @@ The same portal runs on the setup AP and on the device’s LAN IP while connecte
 | Field | Purpose |
 |-------|---------|
 | **Latitude / Longitude** | Radar center and ADS-B query position (defaults in `config.h` until set) |
+| **Field elevation (ft)** | Local field elevation used as the altitude color baseline |
 | **Display distances in miles** | Ring scale label in **mi** instead of **km** (e.g. `6mi` vs `10km`) |
 | **Show airport runways** | Major-airport runway overlay on the radar (off to hide) |
 
@@ -76,9 +82,11 @@ Preset and miles/km choice persist across reboot (`planeradar` NVS namespace).
 
 ### Aircraft
 
-- **Inside the outer ring** — red heading triangle, magenta speed vector (clipped at the ring), callsign / type / altitude tags
-- **Outside the ring** (still within ADS-B fetch) — small **red dot on the screen rim** at the correct bearing (direction cue; not distance-accurate past the ring)
+- **Inside the outer ring** — heading triangle, speed vector, and altitude tag color are altitude-based gradients (cooler at low altitude, warmer at high altitude)
+- **Outside the ring** (still within ADS-B fetch) — small **gradient-colored dot on the screen rim** at the correct bearing (direction cue; not distance-accurate past the ring)
 - **Tags** — placed toward the **center**: west (left) → tag on the **right** of the symbol; east (right) → tag on the **left**
+
+When aircraft overlap, higher-altitude aircraft are drawn above lower-altitude aircraft.
 
 As range decreases (or aircraft approach), targets move inward; beyond-ring dots become full symbols when they cross the outer ring.
 
@@ -186,12 +194,17 @@ pio run -t merge -e supermini
 
 Put the board in download mode (hold **BOOT**, tap **RESET**), then flash with Chrome/Edge over USB.
 
+Flash address for merged image: **`0x0`**.
+
 ### CI and releases (GitHub Actions)
 
 | Workflow | When | Output |
 |----------|------|--------|
-| [Build](.github/workflows/build.yml) | Push / PR to `main` | Artifact `plane-radar-supermini` (merged + split `.bin` files, ~90 days) |
-| [Release](.github/workflows/release.yml) | Git tag `v*` (e.g. `v1.0.0`) | GitHub Release asset `plane-radar-v1.0.0.bin` + `.sha256` |
+| [Build](https://github.com/tbirdrv/ESP32-Plane-Radar/blob/main/.github/workflows/build.yml) | Push / PR to `main` | Artifact `plane-radar-supermini` (merged + split `.bin` files, ~90 days) |
+| [Prerelease](https://github.com/tbirdrv/ESP32-Plane-Radar/blob/main/.github/workflows/prerelease.yml) | Push to `main` | Rolling prerelease asset `plane-radar-main-latest.bin` on tag `nightly-main` |
+| [Release](https://github.com/tbirdrv/ESP32-Plane-Radar/blob/main/.github/workflows/release.yml) | Git tag `v*` (e.g. `v1.0.0`) | GitHub Release asset `plane-radar-v1.0.0.bin` + `.sha256` |
+
+Latest build artifact download page: https://github.com/tbirdrv/ESP32-Plane-Radar/actions/workflows/build.yml
 
 To ship a version users can download:
 
@@ -201,6 +214,32 @@ git push origin v1.0.0
 ```
 
 The release workflow builds firmware in CI and attaches the merged image to the release. Download from **Releases** on GitHub, then flash at **0x0** (ESP32-C3, 4 MB).
+
+Release policy:
+
+- Push to `main` updates the rolling prerelease (`nightly-main`, asset: `plane-radar-main-latest.bin`).
+- Push tag `v*` creates a stable GitHub release (asset: `plane-radar-vX.Y.Z.bin`).
+
+## Troubleshooting
+
+### TLS / `start_ssl_client` errors
+
+- Symptom: serial shows `start_ssl_client: -1` and `adsb: HTTP -1`.
+- Meaning: HTTPS/TLS handshake failed for that ADS-B poll.
+- Typical causes: temporary Wi-Fi instability, low/fragmented heap, or remote TLS timeout.
+- Notes: firmware uses short fail-fast TLS timeouts and backoff to reduce display stalls.
+
+### Portal / AP access issues
+
+- Connect to AP `PlaneRadar-Setup`, then browse directly to `http://192.168.4.1`.
+- If `plane-radar.local` is slow/not found, use the IP address.
+- If setup AP is unstable, reboot and retry with only one phone/laptop connected.
+- BOOT hold (3 s) resets Wi-Fi/location/units and reopens setup mode.
+
+### Flashing issues
+
+- Use merged image (`firmware-merged.bin`) at address **`0x0`**.
+- Ensure board is in download mode (hold BOOT, tap RESET) before flashing.
 
 ## Dependencies
 

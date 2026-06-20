@@ -167,14 +167,19 @@ bool portalOptionChecked(const char* value) {
 }
 
 constexpr int kCoordParamLen = 20;
+constexpr int kElevParamLen = 8;
 constexpr int kClockWindowParamLen = 4;
 constexpr char kCoordInputAttrs[] =
     " type=\"number\" step=\"0.000001\"";
+constexpr char kElevInputAttrs[] =
+  " type=\"number\" min=\"-1500\" max=\"30000\" step=\"1\"";
 
 WiFiManagerParameter s_param_lat("radar_lat", "Latitude (deg)", "0",
                                 kCoordParamLen, kCoordInputAttrs);
 WiFiManagerParameter s_param_lon("radar_lon", "Longitude (deg)", "0",
                                 kCoordParamLen, kCoordInputAttrs);
+WiFiManagerParameter s_param_elev("field_elev_ft", "Field elevation (ft)",
+                                  "0", kElevParamLen, kElevInputAttrs);
 
 char s_miles_checkbox_attrs[32] = "type=\"checkbox\"";
 WiFiManagerParameter s_param_miles("use_miles", "Display distances in miles", "T", 2,
@@ -212,13 +217,17 @@ WiFiManagerParameter s_param_clock_window("clock_window_sec",
 void refreshPortalParamDefaults() {
   char lat_buf[kCoordParamLen + 1];
   char lon_buf[kCoordParamLen + 1];
+  char elev_buf[kElevParamLen + 1];
   char clock_window_buf[kClockWindowParamLen + 1];
   snprintf(lat_buf, sizeof(lat_buf), "%.6f", services::location::lat());
   snprintf(lon_buf, sizeof(lon_buf), "%.6f", services::location::lon());
+  snprintf(elev_buf, sizeof(elev_buf), "%ld",
+           static_cast<long>(services::location::elevationFt()));
   snprintf(clock_window_buf, sizeof(clock_window_buf), "%u",
            static_cast<unsigned>(ui::radar::clockMinuteWindowSec()));
   s_param_lat.setValue(lat_buf, kCoordParamLen);
   s_param_lon.setValue(lon_buf, kCoordParamLen);
+  s_param_elev.setValue(elev_buf, kElevParamLen);
   s_param_clock_window.setValue(clock_window_buf, kClockWindowParamLen);
   snprintf(s_miles_checkbox_attrs, sizeof(s_miles_checkbox_attrs), "type=\"checkbox\"%s",
            ui::radar::useMiles() ? " checked" : "");
@@ -243,8 +252,10 @@ void refreshPortalParamDefaults() {
 void onPortalParamsSaved() {
   Serial.println("[Portal] Save params callback fired");
   if (!services::location::saveFromStrings(s_param_lat.getValue(),
-                                           s_param_lon.getValue())) {
-    Serial.println("Invalid lat/lon in portal G�� keeping previous location");
+                                           s_param_lon.getValue(),
+                                           s_param_elev.getValue())) {
+    Serial.println(
+        "Invalid lat/lon/elevation in portal G�� keeping previous location");
   }
   ui::radar::saveMilesFromPortal(s_param_miles.getValue());
   ui::radar::saveRunwaysFromPortal(s_param_runways.getValue());
@@ -283,6 +294,7 @@ void attachPortalParams(WiFiManager& wm) {
   refreshPortalParamDefaults();
   wm.addParameter(&s_param_lat);
   wm.addParameter(&s_param_lon);
+  wm.addParameter(&s_param_elev);
   wm.addParameter(&s_param_clock_window);
   wm.addParameter(&s_param_miles);
   wm.addParameter(&s_param_runways);

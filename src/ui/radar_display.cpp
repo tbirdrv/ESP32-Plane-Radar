@@ -60,39 +60,32 @@ uint16_t altitudeColor(int32_t alt_ft) {
     return tft.color565(160, 160, 160);
   }
 
-  // Shift by local field elevation so low-altitude nearby traffic remains cool.
-  constexpr int32_t kFieldElevationFt = 600;
-  constexpr int32_t kWarmStartAglFt = 8000;
-  constexpr int32_t kGreenTopAglFt = 18000;
-  constexpr int32_t kYellowTopAglFt = 30000;
-  constexpr int32_t kMaxAglFt = 40000;
-
-  int32_t agl_ft = alt_ft - kFieldElevationFt;
+  int32_t agl_ft = alt_ft - services::location::elevationFt();
   if (agl_ft < 0) {
     agl_ft = 0;
   }
-  if (agl_ft > kMaxAglFt) {
-    agl_ft = kMaxAglFt;
+  if (agl_ft > config::kAltGradMaxAglFt) {
+    agl_ft = config::kAltGradMaxAglFt;
   }
 
-  if (agl_ft <= kWarmStartAglFt) {
+  if (agl_ft <= config::kAltGradWarmStartAglFt) {
     const float t = static_cast<float>(agl_ft) /
-                    static_cast<float>(kWarmStartAglFt);
+                    static_cast<float>(config::kAltGradWarmStartAglFt);
     return rgb565Lerp(0, 64, 255, 0, 255, 255, t);
   }
-  if (agl_ft <= kGreenTopAglFt) {
-    const float t = static_cast<float>(agl_ft - kWarmStartAglFt) /
-                    static_cast<float>(kGreenTopAglFt - kWarmStartAglFt);
+  if (agl_ft <= config::kAltGradGreenTopAglFt) {
+    const float t = static_cast<float>(agl_ft - config::kAltGradWarmStartAglFt) /
+                    static_cast<float>(config::kAltGradGreenTopAglFt - config::kAltGradWarmStartAglFt);
     return rgb565Lerp(0, 255, 255, 0, 255, 0, t);
   }
-  if (agl_ft <= kYellowTopAglFt) {
-    const float t = static_cast<float>(agl_ft - kGreenTopAglFt) /
-                    static_cast<float>(kYellowTopAglFt - kGreenTopAglFt);
+  if (agl_ft <= config::kAltGradYellowTopAglFt) {
+    const float t = static_cast<float>(agl_ft - config::kAltGradGreenTopAglFt) /
+                    static_cast<float>(config::kAltGradYellowTopAglFt - config::kAltGradGreenTopAglFt);
     return rgb565Lerp(0, 255, 0, 255, 255, 0, t);
   }
 
-  const float t = static_cast<float>(agl_ft - kYellowTopAglFt) /
-                  static_cast<float>(kMaxAglFt - kYellowTopAglFt);
+  const float t = static_cast<float>(agl_ft - config::kAltGradYellowTopAglFt) /
+                  static_cast<float>(config::kAltGradMaxAglFt - config::kAltGradYellowTopAglFt);
   return rgb565Lerp(255, 255, 0, 255, 64, 0, t);
 }
 
@@ -383,14 +376,14 @@ int speedLineLengthPx(float gs_knots) {
     return 0;
   }
 
-  // Fixed screen scale: 60 s horizon at gs, not tied to current range zoom.
-  constexpr float kKmPerKnotPerHorizon =
-      1.852f * radar::kAircraftTrackHorizonSec / 3600.0f;
+  constexpr float kNmToKm = 1.852f;
+  const float km_per_hour = gs_knots * kNmToKm;
+  const float horizon_km =
+      km_per_hour * (radar::kAircraftTrackHorizonSec / 3600.0f);
   const float px =
-      gs_knots * kKmPerKnotPerHorizon * radar::kGridOuterRadius /
-      radar::kAircraftTrackRefOuterKm * radar::kAircraftTrackLengthScale;
-
-  const int len = static_cast<int>(px + 0.5f);
+      horizon_km * radar::kGridOuterRadius / radar::kAircraftTrackRefOuterKm *
+      radar::kAircraftTrackLengthScale;
+  const int len = static_cast<int>(lroundf(px));
   if (len < radar::kAircraftSpeedLineMinPx) {
     return radar::kAircraftSpeedLineMinPx;
   }
@@ -543,12 +536,13 @@ void sortDrawItemsLowAltFirst(AircraftDrawItem* items, size_t count,
                                const services::adsb::Aircraft* planes) {
   for (size_t i = 1; i < count; ++i) {
     const AircraftDrawItem key = items[i];
-    const int32_t key_alt = planes[key.index].alt_ft;
+    const int32_t key_alt =
+        (planes[key.index].alt_ft < 0) ? INT32_MIN : planes[key.index].alt_ft;
     size_t j = i;
     while (j > 0) {
-      const int32_t prev_alt = planes[items[j - 1].index].alt_ft;
-      // Treat unknown alt (-1) as low so known-altitude planes draw on top.
-      if (prev_alt >= 0 && (key_alt < 0 || prev_alt <= key_alt)) {
+      const int32_t prev_alt_raw = planes[items[j - 1].index].alt_ft;
+      const int32_t prev_alt = (prev_alt_raw < 0) ? INT32_MIN : prev_alt_raw;
+      if (prev_alt <= key_alt) {
         break;
       }
       items[j] = items[j - 1];
