@@ -9,6 +9,8 @@ bool wifiSetupConnect();
 bool wifiReconnect();
 /** True when the Wi-Fi manager portal/web server is currently active. */
 bool wifiPortalActive();
+/** Open LAN portal on demand (runtime, non-destructive). */
+void wifiRequestLanPortalOnDemand();
 /** Keeps the LAN config portal alive; call every loop() iteration. */
 void wifiLoop();
 bool wifiBootButtonPressed();

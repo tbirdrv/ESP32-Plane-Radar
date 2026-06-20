@@ -137,9 +137,10 @@ void initLabelMetrics() {
     s_scale_use_vlw = true;
     s_scale_vlw_size = findVlwSizeForHeight(scale_target);
 
-    const int clock_target = cardinal_target * 2;
+    const int clock_target = cardinal_target * 3;
     s_clock_use_vlw = true;
-    s_clock_vlw_size = findVlwSizeForHeight(clock_target);
+    s_clock_vlw_size =
+      std::max(findVlwSizeForHeight(clock_target), 1.35f);
   } else {
     const lgfx::GFXfont* cardinal_candidates[] = {&fonts::FreeSansBold12pt7b,
                                                   &fonts::FreeSansBold9pt7b};
@@ -154,7 +155,7 @@ void initLabelMetrics() {
     s_scale_gfx = pickGfxFontClosest(scale_target, scale_candidates, 2);
     s_scale_use_vlw = false;
 
-    const int clock_target = cardinal_target * 2;
+    const int clock_target = cardinal_target * 3;
     const lgfx::GFXfont* clock_candidates[] = {&fonts::FreeSansBold24pt7b,
                                                &fonts::FreeSansBold18pt7b,
                                                &fonts::FreeSansBold12pt7b};
@@ -663,16 +664,20 @@ void drawTimeEdgeMarkers(int cx, int cy, int outer_radius) {
     return;
   }
 
-  const time_t utc_time = timeSync_getUnixTime();
-  const time_t local_time = tzCalc_getLocalTimeFromCache(utc_time);
-  struct tm* tm_info = localtime(&local_time);
-  if (tm_info == nullptr) {
-    return;
+  int hours = 12;
+  int minutes = 0;
+  int seconds = 0;
+  if (timeSync_isSynced()) {
+    const time_t utc_time = timeSync_getUnixTime();
+    const time_t local_time = tzCalc_getLocalTimeFromCache(utc_time);
+    struct tm* tm_info = localtime(&local_time);
+    if (tm_info == nullptr) {
+      return;
+    }
+    hours = tm_info->tm_hour;
+    minutes = tm_info->tm_min;
+    seconds = tm_info->tm_sec;
   }
-
-  const int hours = tm_info->tm_hour;
-  const int minutes = tm_info->tm_min;
-  const int seconds = tm_info->tm_sec;
 
   // Clock angles with 12 at top.
   const float hour_deg = (hours % 12 + minutes / 60.0f) * 30.0f;
@@ -989,11 +994,14 @@ void renderFrame() {
   const bool radar_only_mode = radar::radarOnlyModeEnabled();
   const bool clock_only_mode = radar::clockOnlyModeEnabled() && !radar_only_mode;
   const uint8_t minute_window_sec = radar::clockMinuteWindowSec();
-  const time_t utc_time = timeSync_getUnixTime();
-  const time_t local_time = tzCalc_getLocalTimeFromCache(utc_time);
+  const bool time_synced = timeSync_isSynced();
+  const time_t local_time = time_synced
+                                ? tzCalc_getLocalTimeFromCache(timeSync_getUnixTime())
+                                : static_cast<time_t>(12 * 60 * 60);
   struct tm* tm_info = localtime(&local_time);
   const bool minute_clock_window =
-      (minute_window_sec > 0 && tm_info != nullptr && tm_info->tm_sec < minute_window_sec);
+      (time_synced && minute_window_sec > 0 && tm_info != nullptr &&
+       tm_info->tm_sec < minute_window_sec);
   const bool show_clock = !radar_only_mode &&
                           (clock_only_mode || (aircraft_count == 0) || minute_clock_window);
   

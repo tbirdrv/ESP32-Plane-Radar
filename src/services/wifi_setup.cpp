@@ -64,10 +64,14 @@ bool s_force_config_portal = false;
 WiFiManager s_wm;
 bool s_wm_configured = false;
 bool s_prev_wifi_link_up = false;
+bool s_prev_portal_active = false;
 unsigned long s_lan_portal_grace_deadline_ms = 0;
 unsigned long s_last_lan_ap_watchdog_ms = 0;
 bool s_switch_to_ap_only_wifi_requested = false;
 bool s_stop_portal_requested = false;
+bool s_lan_portal_on_demand_requested = false;
+bool s_lan_portal_on_demand_active = false;
+bool s_wifi_save_seen = false;
 
 constexpr unsigned long kLanPortalGraceMs = 600000;  // 10 minutes after connect
 
@@ -89,9 +93,15 @@ void onPortalWebServerReady() {
     if (s_wm.server == nullptr) {
       return;
     }
+    // Keep the config portal quiet: captive redirects can trigger repeated
+    // browser handoffs on ESP32-C3 AP mode. The setup page is still reachable
+    // directly at 192.168.4.1.
+    if (s_wm.getConfigPortalActive()) {
+      s_wm.server->send(204, "text/plain", "");
+      return;
+    }
     Serial.printf("[Portal] Captive probe -> /\n");
-    // Redirect captive portal probes to the root so WiFiManager can handle them.
-    s_wm.server->sendHeader("Location", "/", true);
+    s_wm.server->sendHeader("Location", String("http://") + WiFi.softAPIP().toString(), true);
     s_wm.server->send(302, "text/plain", "");
   };
 
@@ -99,29 +109,7 @@ void onPortalWebServerReady() {
     if (s_wm.server == nullptr) {
       return;
     }
-    Serial.printf("[Portal] GET / — serving lightweight portal home\n");
-    // Detect whether the request came from the AP subnet (192.168.4.x) or LAN.
-    // WiFi scan on /wifi disrupts STA momentarily, so hide that link on LAN.
-    const bool from_ap =
-        s_wm.server->client().remoteIP()[2] == 4;  // 192.168.4.x
-    // <link rel='icon' href='data:,'> suppresses the browser's automatic
-    // favicon.ico request which would otherwise produce a 404 in the logs.
-    static const char kPortalHomeAp[] PROGMEM =
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<link rel='icon' href='data:,'>"
-        "<title>Plane Radar Setup</title>"
-        "<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
-        "margin:0;padding:18px;background:#f3f6f8;color:#12202b}"
-        "h1{font-size:1.2rem;margin:0 0 10px}p{margin:0 0 12px;color:#30495c}"
-        "a{display:block;text-decoration:none;margin:10px 0;padding:12px 14px;"
-        "border-radius:10px;background:#0e7a70;color:#fff;font-weight:600}"
-        "a.secondary{background:#456a86}</style></head><body>"
-        "<h1>Plane Radar Setup</h1>"
-        "<p>Choose an action:</p>"
-        "<a href='/wifi_ap'>Configure Wi-Fi &amp; Settings</a>"
-        "<a class='secondary' href='/info'>Status</a>"
-        "</body></html>";
+    Serial.printf("[Portal] GET / G�� serving lightweight portal home\n");
     static const char kPortalHomeLan[] PROGMEM =
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -137,48 +125,26 @@ void onPortalWebServerReady() {
         "<h1>Plane Radar Setup</h1>"
         "<p>Choose an action:</p>"
         "<a href='/param'>Device Settings</a>"
+        "<a href='/0wifi'>WiFi Settings</a>"
         "<a class='secondary' href='/info'>Status</a>"
         "<small>To change Wi-Fi network, connect to the<br>"
         "<b>PlaneRadar-Setup</b> AP and open 192.168.4.1</small>"
         "</body></html>";
-    s_wm.server->send(200, "text/html",
-                      from_ap ? kPortalHomeAp : kPortalHomeLan);
+      s_wm.server->send(200, "text/html", kPortalHomeLan);
   };
 
-  // Register a lightweight root page. This avoids costly repeated scans from
-  // forcing every captive-portal probe directly onto /wifi.
+  // Register root page and captive portal probe endpoints.
   s_wm.server->on("/", HTTP_GET, serve_root);
 
   auto switch_to_wifi_ap_only = []() {
     if (s_wm.server == nullptr) {
       return;
     }
-    const wifi_mode_t mode = WiFi.getMode();
-    if (mode == WIFI_AP) {
-      s_wm.server->sendHeader("Location", "/wifi", true);
-      s_wm.server->send(302, "text/plain", "");
-      return;
-    }
-
-    s_switch_to_ap_only_wifi_requested = true;
-    static const char kSwitchingPage[] PROGMEM =
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<link rel='icon' href='data:,'>"
-        "<meta http-equiv='refresh' content='6;url=/wifi'>"
-        "<title>Switching Setup Mode</title>"
-        "<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
-        "margin:0;padding:20px;background:#f3f6f8;color:#12202b}"
-        "h1{font-size:1.1rem;margin:0 0 8px}p{margin:0 0 8px;color:#30495c}</style>"
-        "</head><body><h1>Preparing Wi-Fi Setup</h1>"
-        "<p>Switching to AP-only mode for reliable Wi-Fi scan.</p>"
-        "<p>If disconnected, reconnect to <b>PlaneRadar-Setup</b> and open "
-        "<b>http://192.168.4.1/wifi</b>.</p></body></html>";
-    s_wm.server->send(200, "text/html", kSwitchingPage);
+    s_wm.server->sendHeader("Location", "/0wifi", true);
+    s_wm.server->send(302, "text/plain", "");
   };
   s_wm.server->on("/wifi_ap", HTTP_GET, switch_to_wifi_ap_only);
 
-  // Only register captive portal probe endpoints.
   s_wm.server->on("/generate_204", redirect_to_portal);
   s_wm.server->on("/gen_204", redirect_to_portal);
   s_wm.server->on("/hotspot-detect.html", redirect_to_portal);
@@ -274,9 +240,10 @@ void refreshPortalParamDefaults() {
 }
 
 void onPortalParamsSaved() {
+  Serial.println("[Portal] Save params callback fired");
   if (!services::location::saveFromStrings(s_param_lat.getValue(),
                                            s_param_lon.getValue())) {
-    Serial.println("Invalid lat/lon in portal — keeping previous location");
+    Serial.println("Invalid lat/lon in portal G�� keeping previous location");
   }
   ui::radar::saveMilesFromPortal(s_param_miles.getValue());
   ui::radar::saveRunwaysFromPortal(s_param_runways.getValue());
@@ -297,6 +264,18 @@ void onPortalParamsSaved() {
   if (!ui::radar::lanPortalEnabled()) {
     s_stop_portal_requested = true;
   }
+
+  // If this was an on-demand portal session, auto-close after save so
+  // ADS-B resumes and the display returns to normal operation.
+  if (s_lan_portal_on_demand_active) {
+    Serial.println("[Portal] On-demand portal: closing after config save, restarting ADS-B");
+    s_stop_portal_requested = true;
+  }
+}
+
+void onPortalWifiSaved() {
+  s_wifi_save_seen = true;
+  Serial.println("[Portal] Save WiFi callback fired");
 }
 
 void attachPortalParams(WiFiManager& wm) {
@@ -310,6 +289,7 @@ void attachPortalParams(WiFiManager& wm) {
   wm.addParameter(&s_param_clock_only);
   wm.addParameter(&s_param_radar_only);
   wm.setSaveParamsCallback(onPortalParamsSaved);
+  wm.setSaveConfigCallback(onPortalWifiSaved);
 }
 
 void markForceConfigPortal() {
@@ -487,9 +467,10 @@ void ensureWifiManager() {
       "</script>";
   s_wm.setConfigPortalTimeout(config::kWifiPortalTimeoutSec);
   s_wm.setMinimumSignalQuality(config::kWifiScanMinQualityPct);
-  // Captive DNS redirects create extra request churn on some clients and can
-  // destabilize AP sessions on low-memory targets. Keep portal explicit at
-  // 192.168.4.1 / plane-radar.local for reliability.
+  s_wm.setWiFiAPHidden(false);
+  s_wm.setWiFiAPChannel(1);
+  // Captive DNS redirects cause AP instability on ESP32-C3. Keep portal
+  // explicit at 192.168.4.1 — the setup screen shows the URL.
   s_wm.setCaptivePortalEnable(false);
   s_wm.setWebServerCallback(onPortalWebServerReady);
   s_wm.setAPStaticIPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1),
@@ -506,19 +487,19 @@ void startLanWebPortal() {
     Serial.println("LAN portal not started: portal already active");
     return;
   }
+  if (!wifiLinkUp()) {
+    Serial.println("LAN portal not started: STA link is down");
+    return;
+  }
   refreshPortalParamDefaults();
   WiFi.setSleep(WIFI_PS_NONE);
-  WiFi.setAutoReconnect(false);
-  WiFi.mode(WIFI_AP_STA);
-  ensureLanAccessPoint(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.mode(WIFI_STA);
   s_wm.setConfigPortalBlocking(false);
-  // Start the config portal in non-blocking mode so WiFiManager brings up
-  // both HTTP and DNS handlers for AP/LAN clients.
-  s_wm.startConfigPortal(config::kPortalApName);
-  Serial.printf("LAN/AP portal running (AP-only=%d). STA IP %s  AP IP %s\n",
-                0,
-                WiFi.localIP().toString().c_str(),
-                WiFi.softAPIP().toString().c_str());
+  // Run portal on STA only; avoid AP+STA to preserve heap for ADS-B/TLS.
+  s_wm.startWebPortal();
+  Serial.printf("LAN portal running on STA. IP %s\n",
+                WiFi.localIP().toString().c_str());
 }
 
 void stopLanWebPortal() {
@@ -579,13 +560,15 @@ bool tryConnectWithUi(const String& ssid, const String& pass, bool show_ui) {
   }
 
   for (uint8_t attempt = 1; attempt <= config::kWifiConnectAttempts; ++attempt) {
+    // Always reset the STA state before each manual attempt. This prevents
+    // begin() from failing with "sta is connecting" after a prior failed try.
     if (attempt > 1) {
       Serial.printf("WiFi connect retry %u/%u\n", attempt,
                     config::kWifiConnectAttempts);
-      WiFi.disconnect(true);
-      WiFi.mode(WIFI_OFF);
-      delay(400);
     }
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(400);
 
     startStaConnect(ssid, pass);
 
@@ -606,8 +589,8 @@ bool connectSavedNetwork(bool show_ui) {
   ensureWifiManager();
   const String ssid = s_wm.getWiFiSSID();
   if (ssid.length() == 0) {
-    Serial.println("WiFiManager has no saved SSID; trying SDK-stored STA credentials");
-    return tryConnectWithUi(String(), String(), show_ui);
+    Serial.println("WiFiManager has no saved SSID");
+    return false;
   }
   const String pass = s_wm.getWiFiPass();
   Serial.printf("Trying saved Wi-Fi network '%s'\n", ssid.c_str());
@@ -616,20 +599,20 @@ bool connectSavedNetwork(bool show_ui) {
 
 bool openConfigPortal() {
   stopLanWebPortal();
+  s_wifi_save_seen = false;
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   delay(50);
   statusScreenPortal();
   WiFi.setSleep(WIFI_PS_NONE);
   WiFi.setAutoReconnect(false);
-  if (config::kWifiPortalApOnly) {
-    WiFi.mode(WIFI_AP);
-  } else {
-    WiFi.mode(WIFI_AP_STA);
-  }
-  ensureLanAccessPoint(config::kWifiPortalApOnly);
-  Serial.printf("Starting config portal AP '%s' (AP-only=%d)\n",
-                config::kPortalApName, config::kWifiPortalApOnly ? 1 : 0);
+  // Use AP-only setup portal mode. The /wifi route is forced to /0wifi
+  // (no scan), so STA is not needed here and AP-only is more stable.
+  const bool use_ap_sta_for_setup = false;
+  WiFi.mode(use_ap_sta_for_setup ? WIFI_AP_STA : WIFI_AP);
+  Serial.printf("Starting config portal AP '%s' (AP-only=%d, runtime AP+STA=%d)\n",
+                config::kPortalApName, config::kWifiPortalApOnly ? 1 : 0,
+                use_ap_sta_for_setup ? 1 : 0);
   s_wm.setConfigPortalBlocking(false);
   s_wm.startConfigPortal(config::kPortalApName);
 
@@ -644,9 +627,7 @@ bool openConfigPortal() {
 
   if (ap_ip == IPAddress(0, 0, 0, 0)) {
     Serial.println("Config portal AP has no IP address. Retrying AP startup...");
-    WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1),
-                      IPAddress(255, 255, 255, 0));
-    if (!WiFi.softAP(config::kPortalApName, "")) {
+    if (!ensureLanAccessPoint(config::kWifiPortalApOnly)) {
       Serial.println("Fallback softAP() failed");
       return false;
     }
@@ -668,11 +649,48 @@ bool openConfigPortal() {
   Serial.printf("Initial AP clients: %u\n", WiFi.softAPgetStationNum());
   while (s_wm.getConfigPortalActive()) {
     bootButtonPollLongPress();
+    
+    // If device settings were saved with LAN portal disabled, close the portal
+    if (s_stop_portal_requested) {
+      Serial.println("[Portal] Device settings saved — closing portal");
+      s_stop_portal_requested = false;
+      s_wm.stopConfigPortal();
+      WiFi.mode(WIFI_STA);
+      delay(100);
+      statusScreenConnectingBegin("network");
+      return false;
+    }
+    
+    // After WiFi credentials are saved, give the STA connection time to complete
+    // before WiFiManager decides the portal is done.
+    if (s_wifi_save_seen && !wifiLinkUp()) {
+      Serial.println("[Portal] Credentials saved — waiting for STA connection...");
+      for (int i = 0; i < 50; ++i) {
+        if (wifiLinkUp()) {
+          Serial.println("[Portal] STA connected after save!");
+          break;
+        }
+        delay(100);
+      }
+      if (wifiLinkUp()) {
+        Serial.println("WiFi connected after save — stopping config portal");
+        s_wm.stopConfigPortal();
+        WiFi.mode(WIFI_STA);
+        delay(100);
+        ui::radarDisplayDraw();
+        return true;
+      }
+    }
+    
     if (s_wm.process()) {
-      // WiFiManager indicates STA connect succeeded.
-      // Keep AP/portal active; wifiLoop will keep it available during grace period.
-      Serial.println("WiFiManager reported connected — keeping AP portal active");
+      Serial.printf("[Portal] process() returned connected (save_seen=%d)\n",
+                    s_wifi_save_seen ? 1 : 0);
+      Serial.println("WiFiManager reported connected");
       return wifiLinkUp();
+    }
+    if (wifiLinkUp()) {
+      Serial.println("STA link is up; leaving setup portal loop");
+      return true;
     }
     const unsigned long now = millis();
     if (now - last_ap_watchdog_ms >= kApWatchdogIntervalMs) {
@@ -700,6 +718,20 @@ bool openConfigPortal() {
       Serial.printf("AP clients: %u\n", WiFi.softAPgetStationNum());
     }
     delay(10);
+  }
+  Serial.println("[Portal] Config portal loop exited");
+  // Clean up portal and return to STA mode
+  s_wm.stopConfigPortal();
+  WiFi.mode(WIFI_STA);
+  delay(100);
+  
+  // Force display update when portal closes
+  if (wifiLinkUp()) {
+    Serial.println("[Portal] Connected — showing radar");
+    ui::radarDisplayDraw();
+  } else {
+    Serial.println("[Portal] Not connected — showing connecting screen");
+    statusScreenConnectingBegin("network");
   }
   return wifiLinkUp();
 }
@@ -748,7 +780,7 @@ void bootButtonPollLongPress() {
     if (!s_long_press_handled &&
         millis() - down_ms >= config::kBootResetHoldMs) {
       s_long_press_handled = true;
-      Serial.println("BOOT held — resetting WiFi");
+      Serial.println("BOOT held G�� resetting WiFi");
       wifiResetCredentialsAndReboot();
     }
   } else {
@@ -769,11 +801,24 @@ void wifiResetCredentialsAndReboot() {
 bool wifiReconnect() {
   initBootButton();
   Serial.println("WiFi reconnecting...");
-  return connectSavedNetwork(true);
+  const bool ok = connectSavedNetwork(true);
+  if (ok && wifiLinkUp()) {
+    WiFi.setAutoReconnect(true);
+    Serial.printf("WiFi reconnected: %s  IP %s  RSSI %d\n",
+                  WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(),
+                  WiFi.RSSI());
+  } else {
+    Serial.println("WiFi reconnect failed (saved credentials)");
+  }
+  return ok;
 }
 
 bool wifiPortalActive() {
   return s_wm.getWebPortalActive() || s_wm.getConfigPortalActive();
+}
+
+void wifiRequestLanPortalOnDemand() {
+  s_lan_portal_on_demand_requested = true;
 }
 
 void wifiLoop() {
@@ -783,10 +828,16 @@ void wifiLoop() {
     s_stop_portal_requested = false;
     Serial.println("[Portal] Stopping portal after save (LAN portal disabled)");
     s_lan_portal_grace_deadline_ms = 0;
+    s_lan_portal_on_demand_active = false;
+    const bool was_link_up = wifiLinkUp();
     stopLanWebPortal();
-    prepareSta();
-    WiFi.begin();
-    if (WiFi.status() == WL_CONNECTED) {
+    if (was_link_up) {
+      WiFi.mode(WIFI_STA);
+    } else {
+      prepareSta();
+      WiFi.begin();
+    }
+    if (wifiLinkUp()) {
       ui::radarDisplayDraw();
     }
   }
@@ -805,31 +856,41 @@ void wifiLoop() {
     s_wm.startConfigPortal(config::kPortalApName);
   }
 
-  const bool link_up = wifiLinkUp();
-  if (link_up && !s_prev_wifi_link_up) {
-    s_lan_portal_grace_deadline_ms = millis() + kLanPortalGraceMs;
-    if (!ui::radar::lanPortalEnabled()) {
-      Serial.println("LAN portal grace window active (10 min)");
+  if (s_lan_portal_on_demand_requested) {
+    s_lan_portal_on_demand_requested = false;
+    if (!wifiLinkUp()) {
+      Serial.println("[Portal] On-demand request ignored: STA link is down");
+    } else {
+      if (!s_wm.getWebPortalActive() && !s_wm.getConfigPortalActive()) {
+        startLanWebPortal();
+      }
+      s_lan_portal_on_demand_active =
+          s_wm.getWebPortalActive() || s_wm.getConfigPortalActive();
+      if (s_lan_portal_on_demand_active) {
+        Serial.printf("[Portal] On-demand LAN portal: http://%s\n",
+                      WiFi.localIP().toString().c_str());
+      }
     }
   }
+
+  const bool link_up = wifiLinkUp();
   s_prev_wifi_link_up = link_up;
 
   if (link_up) {
-    const bool allow_grace_portal = lanPortalGraceActive();
     const bool allow_lan_portal =
-        ui::radar::lanPortalEnabled() || allow_grace_portal;
+        ui::radar::lanPortalEnabled() || s_lan_portal_on_demand_active;
     if (allow_lan_portal) {
       if (!s_wm.getWebPortalActive() && !s_wm.getConfigPortalActive()) {
         startLanWebPortal();
       }
     } else if (s_wm.getWebPortalActive() || s_wm.getConfigPortalActive()) {
-      // Keep existing LAN portal running until disconnect/reboot to avoid
-      // dropping active browser sessions with ERR_NETWORK_CHANGED.
+      stopLanWebPortal();
     }
     if (s_wm.getWebPortalActive() || s_wm.getConfigPortalActive()) {
       bootButtonPollLongPress();
       const unsigned long now = millis();
-      if (now - s_last_lan_ap_watchdog_ms >= 3000) {
+      if (s_wm.getConfigPortalActive() &&
+          now - s_last_lan_ap_watchdog_ms >= 3000) {
         s_last_lan_ap_watchdog_ms = now;
         const IPAddress ap_ip = WiFi.softAPIP();
         const bool ap_ok = (ap_ip != IPAddress(0, 0, 0, 0));
@@ -841,11 +902,6 @@ void wifiLoop() {
       s_wm.process();
     }
   } else {
-    // Keep AP/web portal alive even if STA link drops to avoid client-side
-    // ERR_NETWORK_CHANGED while configuring from AP.
-    if (!s_wm.getWebPortalActive() && !s_wm.getConfigPortalActive()) {
-      startLanWebPortal();
-    }
     if (s_wm.getWebPortalActive() || s_wm.getConfigPortalActive()) {
       bootButtonPollLongPress();
       const unsigned long now = millis();
@@ -857,9 +913,24 @@ void wifiLoop() {
           ensureLanAccessPoint(config::kWifiPortalApOnly);
         }
       }
+      if (!s_wm.getConfigPortalActive() && s_wm.getWebPortalActive()) {
+        // STA-only portal is unreachable while disconnected.
+        s_wm.stopWebPortal();
+      }
       s_wm.process();
     }
   }
+
+  const bool portal_active_now = s_wm.getWebPortalActive() || s_wm.getConfigPortalActive();
+  if (s_prev_portal_active && !portal_active_now) {
+    Serial.printf("[Portal] Portal closed. link_up=%d\n", wifiLinkUp() ? 1 : 0);
+    if (wifiLinkUp()) {
+      ui::radarDisplayDraw();
+    } else {
+      statusScreenConnectingBegin("network");
+    }
+  }
+  s_prev_portal_active = portal_active_now;
 }
 
 bool wifiSetupConnect() {
@@ -878,9 +949,8 @@ bool wifiSetupConnect() {
   if (force_portal) {
     Serial.println("Opening WiFi setup portal (after reset)");
     if (openConfigPortal() && wifiLinkUp()) {
-      WiFi.setAutoReconnect(true);
-      Serial.printf("Connected: %s  IP %s\n", WiFi.SSID().c_str(),
-                    WiFi.localIP().toString().c_str());
+      Serial.printf("Connected: %s  IP %s\n",
+                    WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
       return true;
     }
     Serial.println("WiFi connection failed");
@@ -905,19 +975,17 @@ bool wifiSetupConnect() {
   }
 
   if (storedWifiCredentials()) {
-    Serial.println("Saved WiFi could not connect — opening setup portal");
+    Serial.println("Saved WiFi could not connect G�� opening setup portal");
   } else {
-    Serial.println("No saved WiFi — opening setup portal");
+    Serial.println("No saved WiFi G�� opening setup portal");
   }
 
   if (openConfigPortal() && wifiLinkUp()) {
-    WiFi.setAutoReconnect(true);
-    Serial.printf("Connected: %s  IP %s\n", WiFi.SSID().c_str(),
-                  WiFi.localIP().toString().c_str());
+    Serial.printf("Connected: %s  IP %s\n",
+                  WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
     return true;
   }
-
-  Serial.println("WiFi connection failed");
   statusScreenConnectFailed();
   return false;
 }
+

@@ -24,6 +24,7 @@ unsigned long g_last_reconnect_ms = 0;
 unsigned long g_last_adsb_fetch_ms = 0;
 // Track clock refresh when no aircraft (update every second)
 unsigned long g_last_clock_ms = 0;
+bool g_prev_wifi_connected = false;
 
 void showRadarIfConnected() {
   if (WiFi.status() != WL_CONNECTED) {
@@ -48,8 +49,44 @@ void onRangeTap() {
 
 void handleBootButton() {
   bootButtonPollLongPress();
+  static uint8_t tap_count = 0;
+  static unsigned long first_tap_ms = 0;
+  const unsigned long now = millis();
+  constexpr unsigned long kTripleTapWindowMs = 2800;
+
+  // If taps time out, treat them as normal range taps.
+  if (tap_count > 0 && now - first_tap_ms > kTripleTapWindowMs) {
+    while (tap_count > 0) {
+      onRangeTap();
+      --tap_count;
+    }
+    first_tap_ms = 0;
+  }
+
   if (bootButtonConsumeTap()) {
-    onRangeTap();
+    Serial.printf("BOOT tap received (count=%u)\n", static_cast<unsigned>(tap_count + 1));
+
+    if (tap_count == 0) {
+      tap_count = 1;
+      first_tap_ms = now;
+      return;
+    }
+
+    if ((now - first_tap_ms) > kTripleTapWindowMs) {
+      // Prior sequence expired; start a fresh one.
+      tap_count = 1;
+      first_tap_ms = now;
+      return;
+    }
+
+    ++tap_count;
+    if (tap_count >= 3 && (now - first_tap_ms) <= kTripleTapWindowMs) {
+      tap_count = 0;
+      first_tap_ms = 0;
+      Serial.println("BOOT triple-tap: opening LAN portal on demand");
+      wifiRequestLanPortalOnDemand();
+      return;
+    }
   }
 }
 
@@ -59,9 +96,8 @@ void fetchAndDrawAircraft() {
   if (clock_only_effective) {
     return;
   }
-  // Skip ADS-B fetches while portal is active to avoid SSL memory exhaustion.
-  // The portal HTTP server consumes heap during TLS handshakes; pausing ADS-B
-  // prevents malloc failures during concurrent HTTPS connections.
+  // Pause ADS-B fetches whenever a portal is active so the web server
+  // can use CPU and socket resources without starvation.
   if (wifiPortalActive()) {
     return;
   }
@@ -82,6 +118,9 @@ bool minuteClockWindowActive() {
     return true;
   }
   const uint8_t minute_window_sec = ui::radar::clockMinuteWindowSec();
+  if (!timeSync_isSynced()) {
+    return false;
+  }
   if (minute_window_sec == 0) {
     return false;
   }
@@ -119,8 +158,7 @@ void setup() {
     // Initialize NTP time sync after WiFi connects
     timeSync_init();
     showRadarIfConnected();
-    g_last_adsb_fetch_ms = millis() - config::kAdsbFetchIntervalMs;
-    fetchAndDrawAircraft();
+    // Let heap/network settle briefly after portal close before first TLS fetch.
     g_last_adsb_fetch_ms = millis();
   } else {
     Serial.println("Wi-Fi setup complete: not connected");
@@ -129,7 +167,27 @@ void setup() {
 
 void loop() {
   handleBootButton();
+  timeSync_poll();
   wifiLoop();
+
+  // While a portal is active, keep the loop lightweight so WiFiManager
+  // request handling is not starved by display/radar work.
+  if (wifiPortalActive()) {
+    delay(10);
+    return;
+  }
+
+  const bool wifi_connected_now = (WiFi.status() == WL_CONNECTED);
+  if (wifi_connected_now != g_prev_wifi_connected) {
+    if (wifi_connected_now) {
+      Serial.printf("[WiFi] Link up: SSID '%s' IP %s RSSI %d\n",
+                    WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(),
+                    WiFi.RSSI());
+    } else {
+      Serial.println("[WiFi] Link down");
+    }
+    g_prev_wifi_connected = wifi_connected_now;
+  }
 
   // Periodically log heap to diagnose memory pressure during portal activity.
   static unsigned long last_heap_log_ms = 0;
@@ -141,7 +199,7 @@ void loop() {
                   ESP.getFreeHeap(), ESP.getMinFreeHeap());
   }
 
-  if (WiFi.status() != WL_CONNECTED) {
+  if (!wifi_connected_now) {
     if (g_radar_visible) {
       if (!wifiPortalActive()) {
         Serial.println("WiFi lost — will reconnect");

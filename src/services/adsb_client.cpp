@@ -3,6 +3,10 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
+#if defined(ESP32)
+#include <esp_heap_caps.h>
+#endif
+
 #include <ArduinoJson.h>
 
 #include <cstring>
@@ -15,13 +19,15 @@ namespace {
 
 constexpr char kApiBase[] = "https://opendata.adsb.fi/api/v3/lat/";
 constexpr float kKmPerNm = 1.852f;
-constexpr int kConnectAttemptMs = 1500;
-constexpr unsigned long kRequestTimeoutMs = 2500;
+constexpr int kConnectAttemptMs = 4000;
+constexpr unsigned long kRequestTimeoutMs = 8000;
 constexpr uint8_t kRequestRetryCount = 3;
 constexpr unsigned long kRetryDelayMs = 250;
-constexpr int kTlsHandshakeTimeoutSec = 3;
+constexpr int kTlsHandshakeTimeoutSec = 8;
 // Skip TLS entirely if free heap is below this threshold to avoid alloc failures.
 constexpr uint32_t kMinHeapForTlsBytes = 55000;
+// TLS on ESP32 also needs a sufficiently large contiguous block.
+constexpr uint32_t kMinLargestBlockForTlsBytes = 32000;
 
 Aircraft s_aircraft[kMaxAircraft];
 size_t s_aircraft_count = 0;
@@ -196,8 +202,8 @@ bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
   url += String(center_lon, 6);
   url += "/dist/";
   url += String(dist_nm, 1);
-
-  String payload;
+  JsonDocument doc;
+  bool parsed_ok = false;
   int last_code = HTTPC_ERROR_CONNECTION_REFUSED;
   for (uint8_t attempt = 1; attempt <= kRequestRetryCount; ++attempt) {
     pollNetwork();
@@ -214,6 +220,16 @@ bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
       last_code = HTTPC_ERROR_CONNECTION_REFUSED;
       break;  // no point retrying, heap won't recover mid-loop
     }
+
+#if defined(ESP32)
+    const uint32_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    if (largest_block < kMinLargestBlockForTlsBytes) {
+      Serial.printf("adsb: skipping TLS — fragmented heap (largest=%u free=%u)\n",
+                    largest_block, ESP.getFreeHeap());
+      last_code = HTTPC_ERROR_CONNECTION_REFUSED;
+      break;
+    }
+#endif
 
     WiFiClientSecure client;
     client.setInsecure();
@@ -238,12 +254,31 @@ bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
     const int code = http.GET();
     last_code = code;
     if (code == HTTP_CODE_OK) {
-      // Use HTTPClient body reader so chunked transfer encoding is decoded properly.
-      payload = http.getString();
+      JsonDocument filter;
+      filter["ac"][0]["lat"] = true;
+      filter["ac"][0]["lon"] = true;
+      filter["ac"][0]["true_heading"] = true;
+      filter["ac"][0]["mag_heading"] = true;
+      filter["ac"][0]["track"] = true;
+      filter["ac"][0]["dir"] = true;
+      filter["ac"][0]["gs"] = true;
+      filter["ac"][0]["tas"] = true;
+      filter["ac"][0]["ias"] = true;
+      filter["ac"][0]["alt_baro"] = true;
+      filter["ac"][0]["alt_geom"] = true;
+      filter["ac"][0]["flight"] = true;
+      filter["ac"][0]["hex"] = true;
+      filter["ac"][0]["t"] = true;
+      doc.clear();
+      const DeserializationError err =
+          deserializeJson(doc, *http.getStreamPtr(),
+                          DeserializationOption::Filter(filter));
       http.end();
-      if (payload.length() > 0) {
+      if (!err) {
+        parsed_ok = true;
         break;
       }
+      Serial.printf("adsb: JSON parse error: %s\n", err.c_str());
       last_code = HTTPC_ERROR_READ_TIMEOUT;
     } else {
       http.end();
@@ -254,22 +289,9 @@ bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
     }
   }
 
-  if (payload.length() == 0) {
+  if (!parsed_ok) {
     Serial.printf("adsb: HTTP %d\n", last_code);
     registerFetchFailure();
-    return false;
-  }
-
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, payload);
-  if (err) {
-    Serial.printf("adsb: JSON parse error: %s\n", err.c_str());
-    printPayloadPreview(payload);
-    // IncompleteInput means network was fine but response was truncated server-side.
-    // Don't back off exponentially — just skip this poll cycle.
-    if (err.code() != DeserializationError::IncompleteInput) {
-      registerFetchFailure();
-    }
     return false;
   }
 
