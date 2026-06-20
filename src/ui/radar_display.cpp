@@ -660,7 +660,7 @@ void drawCardinalLabels() {
 }
 
 void drawTimeEdgeMarkers(int cx, int cy, int outer_radius) {
-  if (!radar::radarOnlyModeEnabled()) {
+  if (radar::clockOnlyModeEnabled()) {
     return;
   }
 
