@@ -42,6 +42,7 @@ jobs:
       - name: Build and merge
         run: |
           pio run -e supermini
+          pio run -t buildfs -e supermini
           pio run -t merge -e supermini
 
       - name: Package release files
@@ -52,7 +53,9 @@ jobs:
           fi
           mkdir -p dist
           cp .pio/build/supermini/firmware-merged.bin "dist/plane-radar-${VERSION}.bin"
+          cp .pio/build/supermini/littlefs.bin "dist/plane-radar-${VERSION}-littlefs.bin"
           sha256sum "dist/plane-radar-${VERSION}.bin" > "dist/plane-radar-${VERSION}.bin.sha256"
+          sha256sum "dist/plane-radar-${VERSION}-littlefs.bin" > "dist/plane-radar-${VERSION}-littlefs.bin.sha256"
           echo "version=${VERSION}" >> "$GITHUB_ENV"
 
       - name: Publish GitHub Release
