@@ -11,7 +11,9 @@
 #define FALLBACK_CLOCK_UNIX_TIME 1704110400
 
 // NTP configuration
-#define NTP_SERVER "pool.ntp.org"
+#define NTP_SERVER_1 "pool.ntp.org"
+#define NTP_SERVER_2 "time.google.com"
+#define NTP_SERVER_3 "time.cloudflare.com"
 #define TZ_INFO "UTC0"  // We'll handle timezone in timezone_calc.cpp
 #define NTP_RETRY_INTERVAL_MS 5000
 #define NTP_RESYNC_INTERVAL_MS (12UL * 60UL * 60UL * 1000UL)
@@ -50,7 +52,7 @@ void timeSync_init() {
   Serial.println("[TimeSync] Initializing NTP time sync...");
   
   // Set timezone to UTC (no DST) - we'll apply timezone offset in timezone_calc
-  configTime(0, 0, NTP_SERVER);
+  configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2, NTP_SERVER_3);
   last_ntp_attempt_millis = millis();
   ntp_synced = false;
   last_sync_time = FALLBACK_UNIX_TIME;
@@ -100,7 +102,7 @@ void timeSync_poll() {
 
     last_ntp_resync_millis = now_ms;
     Serial.println("[TimeSync] 12-hour NTP resync...");
-    configTime(0, 0, NTP_SERVER);
+    configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2, NTP_SERVER_3);
     tryMarkSyncIfReady();
     return;
   }
@@ -114,7 +116,7 @@ void timeSync_poll() {
 
   last_ntp_attempt_millis = now_ms;
   Serial.println("[TimeSync] Retrying NTP sync...");
-  configTime(0, 0, NTP_SERVER);
+  configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2, NTP_SERVER_3);
   tryMarkSyncIfReady();
 }
 
@@ -123,6 +125,6 @@ void timeSync_resync() {
   ntp_synced = false;
   last_ntp_attempt_millis = millis();
   last_ntp_resync_millis = 0;
-  configTime(0, 0, NTP_SERVER);
+  configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2, NTP_SERVER_3);
   tryMarkSyncIfReady();
 }

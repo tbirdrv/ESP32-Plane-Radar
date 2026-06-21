@@ -11,6 +11,7 @@
 #include "services/radar_location.h"
 #include "services/time_sync.h"
 #include "services/timezone_calc.h"
+#include "services/web_portal.h"
 #include "services/wifi_setup.h"
 #include "ui/radar_display.h"
 #include "ui/radar_range.h"
@@ -25,6 +26,7 @@ unsigned long g_last_adsb_fetch_ms = 0;
 // Track clock refresh when no aircraft (update every second)
 unsigned long g_last_clock_ms = 0;
 bool g_prev_wifi_connected = false;
+bool g_showing_ip_screen = false;
 
 void showRadarIfConnected() {
   if (WiFi.status() != WL_CONNECTED) {
@@ -49,44 +51,11 @@ void onRangeTap() {
 
 void handleBootButton() {
   bootButtonPollLongPress();
-  static uint8_t tap_count = 0;
-  static unsigned long first_tap_ms = 0;
-  const unsigned long now = millis();
-  constexpr unsigned long kTripleTapWindowMs = 1000;
-
-  // If taps time out, treat them as normal range taps.
-  if (tap_count > 0 && now - first_tap_ms > kTripleTapWindowMs) {
-    while (tap_count > 0) {
-      onRangeTap();
-      --tap_count;
-    }
-    first_tap_ms = 0;
-  }
-
-  if (bootButtonConsumeTap()) {
-    Serial.printf("BOOT tap received (count=%u)\n", static_cast<unsigned>(tap_count + 1));
-
-    if (tap_count == 0) {
-      tap_count = 1;
-      first_tap_ms = now;
-      return;
-    }
-
-    if ((now - first_tap_ms) > kTripleTapWindowMs) {
-      // Prior sequence expired; start a fresh one.
-      tap_count = 1;
-      first_tap_ms = now;
-      return;
-    }
-
-    ++tap_count;
-    if (tap_count >= 3 && (now - first_tap_ms) <= kTripleTapWindowMs) {
-      tap_count = 0;
-      first_tap_ms = 0;
-      Serial.println("BOOT triple-tap: opening LAN portal on demand");
-      wifiRequestLanPortalOnDemand();
-      return;
-    }
+  if (bootButtonConsumeDoubleClick() && !g_showing_ip_screen && WiFi.status() == WL_CONNECTED) {
+    g_showing_ip_screen = true;
+    statusScreenIPAddressBegin();
+  } else if (bootButtonConsumeTap() && !g_showing_ip_screen) {
+    onRangeTap();
   }
 }
 
@@ -142,6 +111,7 @@ void setup() {
 
   bootButtonInit();
   displayInit();
+  services::web::begin();
   Serial.println("Initializing location and radar services");
   services::location::init();
   ui::radar::rangeInit();
@@ -155,6 +125,9 @@ void setup() {
 
   if (wifiSetupConnect()) {
     Serial.println("Wi-Fi setup complete: connected");
+    Serial.printf("[NET] Connected SSID '%s' IP %s RSSI %d\n",
+                  WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(),
+                  WiFi.RSSI());
     // Initialize NTP time sync after WiFi connects
     timeSync_init();
     showRadarIfConnected();
@@ -177,6 +150,18 @@ void loop() {
     return;
   }
 
+  // Handle IP address screen display and timeout
+  if (g_showing_ip_screen) {
+    if (!statusScreenIPAddressTick()) {
+      g_showing_ip_screen = false;
+      if (g_radar_visible) {
+        ui::radarDisplayDraw();
+      }
+    }
+    delay(10);
+    return;
+  }
+
   const bool wifi_connected_now = (WiFi.status() == WL_CONNECTED);
   if (wifi_connected_now != g_prev_wifi_connected) {
     if (wifi_connected_now) {
@@ -189,12 +174,15 @@ void loop() {
     g_prev_wifi_connected = wifi_connected_now;
   }
 
-  // Periodically log heap to diagnose memory pressure during portal activity.
+  // Periodically log heap to diagnose memory pressure during runtime.
   static unsigned long last_heap_log_ms = 0;
   if (millis() - last_heap_log_ms >= 15000) {
     last_heap_log_ms = millis();
-    Serial.printf("[LOOP] Portal=%d Aircraft=%u Heap: free=%u, min=%u\n",
-                  (int)wifiPortalActive(),
+    const String ip_str = wifi_connected_now
+                              ? WiFi.localIP().toString()
+                              : String("0.0.0.0");
+    Serial.printf("[LOOP] IP=%s Aircraft=%u Heap: free=%u, min=%u\n",
+                  ip_str.c_str(),
                   static_cast<unsigned>(services::adsb::aircraftCount()),
                   ESP.getFreeHeap(), ESP.getMinFreeHeap());
   }
@@ -223,6 +211,8 @@ void loop() {
       g_last_reconnect_ms = millis();
       if (wifiReconnect()) {
         g_wifi_down_since = 0;
+        // Re-trigger NTP sync when Wi-Fi reconnects after startup.
+        timeSync_resync();
         showRadarIfConnected();
       }
     }

@@ -1,6 +1,7 @@
 #include "ui/status_screens.h"
 
 #include <lgfx/v1/lgfx_fonts.hpp>
+#include <WiFi.h>
 
 #include <cmath>
 #include <cstdio>
@@ -240,4 +241,63 @@ void statusScreenWifiReset() {
   };
   drawTextBlock(config::kColorYellow, config::kTextOnYellow, lines,
                 sizeof(lines) / sizeof(lines[0]));
+}
+
+namespace {
+constexpr auto& kIPGfxTitle = fonts::FreeSansBold12pt7b;
+constexpr auto& kIPGfxBody = fonts::FreeSansBold18pt7b;
+constexpr auto& kIPGfxCountdown = fonts::FreeSans12pt7b;
+constexpr unsigned long kIPScreenTimeoutMs = 10000UL;
+unsigned long s_ip_screen_start_ms = 0;
+char s_ip_address_str[20];
+int s_ip_last_displayed_sec = -1;
+}
+
+void statusScreenIPAddressBegin() {
+  s_ip_screen_start_ms = millis();
+  s_ip_last_displayed_sec = -1;
+  // Get current IP address
+  IPAddress ip = WiFi.localIP();
+  snprintf(s_ip_address_str, sizeof(s_ip_address_str), "%u.%u.%u.%u",
+           ip[0], ip[1], ip[2], ip[3]);
+  statusScreenIPAddressTick();
+}
+
+bool statusScreenIPAddressTick() {
+  unsigned long elapsed = millis() - s_ip_screen_start_ms;
+  if (elapsed >= kIPScreenTimeoutMs) {
+    return false;  // Timeout expired
+  }
+  
+  int remaining_sec = (kIPScreenTimeoutMs - elapsed + 500) / 1000;
+  if (remaining_sec < 0) {
+    remaining_sec = 0;
+  }
+  
+  // Only redraw if the displayed countdown second changed (reduces flicker)
+  if (remaining_sec == s_ip_last_displayed_sec) {
+    return true;
+  }
+  s_ip_last_displayed_sec = remaining_sec;
+  
+  tft.fillScreen(config::kColorBlack);
+  tft.setTextColor(config::kTextOnBlack, config::kColorBlack);
+  
+  // Draw title
+  tft.setFont(&kIPGfxTitle);
+  tft.setTextDatum(textdatum_t::middle_center);
+  tft.drawString("Setup Portal", kCenterX, 80);
+  
+  // Draw IP address
+  tft.setFont(&kIPGfxBody);
+  tft.drawString(s_ip_address_str, kCenterX, 130);
+  
+  // Draw countdown
+  char countdown[16];
+  snprintf(countdown, sizeof(countdown), "Closes in %d s", remaining_sec);
+  tft.setFont(&kIPGfxCountdown);
+  tft.setTextDatum(textdatum_t::middle_center);
+  tft.drawString(countdown, kCenterX, 170);
+  
+  return true;  // Screen is still active
 }

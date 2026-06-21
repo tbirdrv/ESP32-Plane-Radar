@@ -25,7 +25,7 @@ constexpr uint8_t kDefaultRangeIndex = 1;  // 10 km ring
 constexpr uint8_t kDefaultClockMinuteWindowSec = 10;
 constexpr uint8_t kMinClockMinuteWindowSec = 0;
 constexpr uint8_t kMaxClockMinuteWindowSec = 59;
-constexpr bool kDefaultLanPortalEnabled = false;
+constexpr bool kDefaultLanPortalEnabled = true;
 constexpr bool kDefaultClockOnlyEnabled = false;
 constexpr bool kDefaultRadarOnlyEnabled = false;
 constexpr float kKmPerMile = 1.609344f;
@@ -124,7 +124,12 @@ void rangeInit() {
       (saved_clock_window <= kMaxClockMinuteWindowSec)
         ? saved_clock_window
         : kDefaultClockMinuteWindowSec;
-    s_lan_portal_enabled = s_prefs.getBool(kPrefsLanPortalKey, kDefaultLanPortalEnabled);
+    if (s_prefs.isKey(kPrefsLanPortalKey)) {
+      s_lan_portal_enabled =
+          s_prefs.getBool(kPrefsLanPortalKey, kDefaultLanPortalEnabled);
+    } else {
+      s_lan_portal_enabled = kDefaultLanPortalEnabled;
+    }
     s_clock_only_enabled = s_prefs.getBool(kPrefsClockOnlyKey, kDefaultClockOnlyEnabled);
     s_radar_only_enabled = s_prefs.getBool(kPrefsRadarOnlyKey, kDefaultRadarOnlyEnabled);
   s_prefs.end();
@@ -168,6 +173,32 @@ void saveRunwaysFromPortal(const char* checkbox_value) {
   s_show_runways = portalCheckboxChecked(checkbox_value);
   saveShowRunways();
   Serial.printf("Runway overlay: %s\n", s_show_runways ? "on" : "off");
+}
+
+void saveRangeIndexFromPortal(const char* index_value) {
+  if (index_value == nullptr || index_value[0] == '\0') {
+    return;
+  }
+
+  char* end = nullptr;
+  long index = strtol(index_value, &end, 10);
+  if (end == index_value || (end != nullptr && *end != '\0')) {
+    Serial.printf("Range preset unchanged (invalid value: '%s')\n", index_value);
+    return;
+  }
+
+  if (index < 0) {
+    index = 0;
+  }
+  if (index >= static_cast<long>(kRangePresetCount)) {
+    index = static_cast<long>(kRangePresetCount) - 1;
+  }
+
+  s_range_index = static_cast<uint8_t>(index);
+  saveRangeIndex();
+  Serial.printf("Range preset index: %u (ring3 %.0f km)\n",
+                static_cast<unsigned>(s_range_index),
+                static_cast<double>(kRangePresets[s_range_index].ring3_km));
 }
 
 void saveClockMinuteWindowSecFromPortal(const char* seconds_value) {

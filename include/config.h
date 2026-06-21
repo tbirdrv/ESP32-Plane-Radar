@@ -16,7 +16,7 @@ constexpr char kPortalHostUrl[] = "plane-radar.local";
 /** Per-attempt STA connect wait (ms); retried kWifiConnectAttempts times. */
 constexpr unsigned long kWifiConnectAttemptMs = 15000;
 constexpr uint8_t kWifiConnectAttempts = 3;
-constexpr unsigned long kWifiPortalTimeoutSec = 300;  // 5 min timeout; portal restarts on next boot if AP stays dead
+constexpr unsigned long kWifiPortalTimeoutSec = 0;  // 0 = no timeout while configuring
 constexpr unsigned long kWifiConnectingFrameMs = 50;
 /** Filter APs shown on /wifi by quality percent (0-100). ~60 ~= 3-4 bars. */
 constexpr int kWifiScanMinQualityPct = 60;
@@ -25,7 +25,7 @@ constexpr bool kWifiPortalApOnly = true;
 /** Wait after disconnect before reconnecting (avoids portal on brief drops). */
 constexpr unsigned long kWifiDownGraceMs = 4000;
 /** Minimum interval between background reconnect tries. */
-constexpr unsigned long kWifiReconnectIntervalMs = 7000;
+constexpr unsigned long kWifiReconnectIntervalMs = 15000;
 
 // --- BOOT button (ESP32-C3 Super Mini, active LOW) ---
 constexpr gpio_num_t kBootPin = GPIO_NUM_9;

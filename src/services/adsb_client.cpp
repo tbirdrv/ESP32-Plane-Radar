@@ -19,12 +19,13 @@ namespace {
 
 constexpr char kApiBase[] = "https://opendata.adsb.fi/api/v3/lat/";
 constexpr float kKmPerNm = 1.852f;
-// Keep failed HTTPS attempts short so the render loop stays responsive.
-constexpr int kConnectAttemptMs = 1200;
-constexpr unsigned long kRequestTimeoutMs = 2500;
-constexpr uint8_t kRequestRetryCount = 1;
-constexpr unsigned long kRetryDelayMs = 250;
-constexpr int kTlsHandshakeTimeoutSec = 2;
+// Use conservative TLS timing/retry values; ESP32-C3 handshakes can be bursty
+// right after reconnect and need a bit more headroom.
+constexpr int kConnectAttemptMs = 2500;
+constexpr unsigned long kRequestTimeoutMs = 10000;
+constexpr uint8_t kRequestRetryCount = 3;
+constexpr unsigned long kRetryDelayMs = 500;
+constexpr int kTlsHandshakeTimeoutSec = 8;
 // Skip TLS entirely if free heap is below this threshold to avoid alloc failures.
 constexpr uint32_t kMinHeapForTlsBytes = 55000;
 // TLS on ESP32 also needs a sufficiently large contiguous block.

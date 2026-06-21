@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configure Radar</title>
+  <link rel="stylesheet" href="/radar.css">
+</head>
+<body>
+  <main class="card">
+    <h1>Configure Radar</h1>
+    <form id="radar-form">
+      <label for="rlat">Latitude (deg)</label>
+      <input id="rlat" type="number" step="0.000001">
+
+      <label for="rlon">Longitude (deg)</label>
+      <input id="rlon" type="number" step="0.000001">
+
+      <fieldset>
+        <legend>Display</legend>
+        <label for="rangeIndex">Initial range</label>
+        <select id="rangeIndex">
+          <option value="0" data-km="5">5 km</option>
+          <option value="1" data-km="10">10 km</option>
+          <option value="2" data-km="15">15 km</option>
+          <option value="3" data-km="25">25 km</option>
+          <option value="4" data-km="35">35 km</option>
+        </select>
+
+        <label class="chk"><input type="checkbox" id="useMiles"> Display distances in miles</label>
+        <label class="chk"><input type="checkbox" id="showRunways"> Show airport runways</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Additional Settings</legend>
+        <label for="elevFt">Field elevation (ft)</label>
+        <input id="elevFt" type="number" min="-1500" max="30000" step="1">
+
+        <label for="modeAuto">Display mode</label>
+        <label class="chk"><input type="radio" name="displayMode" id="modeAuto" value="auto"> Auto</label>
+        <label class="chk"><input type="radio" name="displayMode" id="modeClock" value="clock"> Clock only</label>
+        <label class="chk"><input type="radio" name="displayMode" id="modeRadar" value="radar"> Radar only</label>
+
+        <label for="clockWindowSec">Clock at each minute (sec, 0-59)</label>
+        <input id="clockWindowSec" type="number" min="0" max="59" step="1">
+
+        <p class="muted">Auto shows the clock at each minute for the configured seconds, then returns to radar.</p>
+      </fieldset>
+
+      <button type="submit">Save</button>
+      <p id="status" class="status" role="status"></p>
+    </form>
+    <nav class="links">
+      <a href="/">&larr; Back to menu</a>
+    </nav>
+  </main>
+  <script src="/radar.js"></script>
+</body>
+</html>

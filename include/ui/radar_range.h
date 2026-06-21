@@ -13,7 +13,7 @@ namespace ui::radar {
  *  10 km  — default; neighborhood spotting
  *  15 km  — wider local area
  *  25 km  — metro / regional picture
- *  50 km  — county / larger view
+ *  35 km  — county / larger view
  *
  * Outer radius (for aircraft math) is ring-3 distance ÷ 0.75.
  */
@@ -30,7 +30,7 @@ constexpr RangePreset kRangePresets[] = {
     {10.0f, 10.0f * kRing3ToOuterKm},
     {15.0f, 15.0f * kRing3ToOuterKm},
     {25.0f, 25.0f * kRing3ToOuterKm},
-    {50.0f, 50.0f * kRing3ToOuterKm},
+    {35.0f, 35.0f * kRing3ToOuterKm},
 };
 
 constexpr size_t kRangePresetCount =
@@ -54,6 +54,8 @@ bool radarOnlyModeEnabled();
 /** WiFi portal checkbox: "T" = miles, otherwise km. */
 void saveMilesFromPortal(const char* checkbox_value);
 void saveRunwaysFromPortal(const char* checkbox_value);
+/** WiFi portal selection field: range preset index (0..kRangePresetCount-1). */
+void saveRangeIndexFromPortal(const char* index_value);
 /** WiFi portal numeric field: seconds (0-59) for per-minute clock window. */
 void saveClockMinuteWindowSecFromPortal(const char* seconds_value);
 void saveLanPortalEnabledFromPortal(const char* checkbox_value);

@@ -569,6 +569,7 @@ void drawAircraft() {
 
   const size_t n = services::adsb::aircraftCount();
   const services::adsb::Aircraft* planes = services::adsb::aircraftList();
+  const float draw_max_km = radar::fetchRadiusKm();
 
   AircraftDrawItem items[services::adsb::kMaxAircraft];
   BeyondDotDrawItem dots[services::adsb::kMaxAircraft];
@@ -580,6 +581,12 @@ void drawAircraft() {
     float dy_km = 0.0f;
     float dist_km = 0.0f;
     offsetKmFromCenter(planes[i].lat, planes[i].lon, &dx_km, &dy_km, &dist_km);
+
+    // If cached data came from an older, wider fetch range, do not keep
+    // rendering those distant targets after the user tightens the range.
+    if (dist_km > draw_max_km) {
+      continue;
+    }
 
     if (isInsideOuterRingKm(dist_km)) {
       int x = 0;
@@ -783,7 +790,7 @@ void drawTimeEdgeMarkers(int cx, int cy, int outer_radius) {
   int sx = 0;
   int sy = 0;
   markerPos(second_deg, &sx, &sy);
-  const uint16_t sec_color = tft.color565(255, 0, 0);
+    const uint16_t sec_color = tft.color565(255, 255, 255);
   s_draw->fillCircle(sx, sy, radar::kCenterDotRadius, sec_color);
 }
 
@@ -907,6 +914,7 @@ void drawClockFace(int cx, int cy, int radius, time_t localTime, bool tickSecond
                                                            label_h * label_h));
     const int marker_radius = radius - 24;
     const float digit_clearance = label_r + (label_h * 0.9f);
+    const float hand_clearance = label_r + std::max(6.0f, label_h * 0.55f);
 
     auto minDistanceToClockDigits = [&](int lx, int ly) -> float {
       float best = 1e9f;
@@ -924,52 +932,72 @@ void drawClockFace(int cx, int cy, int radius, time_t localTime, bool tickSecond
       return best;
     };
 
-    // Keep label closer to the center than before, then choose the position
-    // with the best clearance from hour/minute hands.
-    const float orbit_r = radius * 0.58f;
-    const float candidate_deg[] = {90.0f, 120.0f, 60.0f, 150.0f, 30.0f,
-                                   180.0f, 0.0f, 240.0f, 300.0f};
-
+    // Search a dense set of angular positions/radii so AC label stays clear
+    // of hands and digits instead of falling back near the bottom center.
+    constexpr float kOrbitScales[] = {0.50f, 0.58f, 0.66f};
     int best_x = cx;
-    int best_y = cy + static_cast<int>(orbit_r);
+    int best_y = cy;
     float best_score = -1.0f;
+    bool found_strict = false;
 
-    for (float deg : candidate_deg) {
-      const float a = deg * kPi / 180.0f;
-      const int lx = cx + static_cast<int>(cosf(a) * orbit_r);
-      const int ly = cy + static_cast<int>(sinf(a) * orbit_r);
+    int relaxed_x = cx;
+    int relaxed_y = cy;
+    float relaxed_score = -1.0f;
 
-      // Ensure label box stays inside the dial area.
-      const float edge_dist = sqrtf(static_cast<float>((lx - cx) * (lx - cx) +
-                                                        (ly - cy) * (ly - cy)));
-      if (edge_dist + label_r > static_cast<float>(radius - 4)) {
-        continue;
+    for (float orbit_scale : kOrbitScales) {
+      const float orbit_r = radius * orbit_scale;
+      for (int deg = 0; deg < 360; deg += 8) {
+        const float a = static_cast<float>(deg) * kPi / 180.0f;
+        const int lx = cx + static_cast<int>(cosf(a) * orbit_r);
+        const int ly = cy + static_cast<int>(sinf(a) * orbit_r);
+
+        // Ensure label box stays inside the dial area.
+        const float edge_dist = sqrtf(static_cast<float>((lx - cx) * (lx - cx) +
+                                                          (ly - cy) * (ly - cy)));
+        if (edge_dist + label_r > static_cast<float>(radius - 4)) {
+          continue;
+        }
+
+        const float d_digits = minDistanceToClockDigits(lx, ly);
+        const float d_hour = pointToSegmentDistance(static_cast<float>(lx),
+                                                    static_cast<float>(ly),
+                                                    static_cast<float>(cx),
+                                                    static_cast<float>(cy),
+                                                    static_cast<float>(hour_x),
+                                                    static_cast<float>(hour_y));
+        const float d_min = pointToSegmentDistance(static_cast<float>(lx),
+                                                   static_cast<float>(ly),
+                                                   static_cast<float>(cx),
+                                                   static_cast<float>(cy),
+                                                   static_cast<float>(minute_x),
+                                                   static_cast<float>(minute_y));
+        const float d_hands = d_hour < d_min ? d_hour : d_min;
+        const float score = d_hands < d_digits ? d_hands : d_digits;
+
+        // Keep a relaxed best candidate in case strict thresholds cannot be met.
+        if (score > relaxed_score) {
+          relaxed_score = score;
+          relaxed_x = lx;
+          relaxed_y = ly;
+        }
+
+        if (d_digits < digit_clearance || d_hands < hand_clearance) {
+          continue;
+        }
+
+        if (score > best_score) {
+          best_score = score;
+          best_x = lx;
+          best_y = ly;
+          found_strict = true;
+        }
       }
+    }
 
-      const float d_digits = minDistanceToClockDigits(lx, ly);
-      if (d_digits < digit_clearance) {
-        continue;
-      }
-
-      const float d_hour = pointToSegmentDistance(static_cast<float>(lx),
-                                                  static_cast<float>(ly),
-                                                  static_cast<float>(cx),
-                                                  static_cast<float>(cy),
-                                                  static_cast<float>(hour_x),
-                                                  static_cast<float>(hour_y));
-      const float d_min = pointToSegmentDistance(static_cast<float>(lx),
-                                                 static_cast<float>(ly),
-                                                 static_cast<float>(cx),
-                                                 static_cast<float>(cy),
-                                                 static_cast<float>(minute_x),
-                                                 static_cast<float>(minute_y));
-      const float d_hands = d_hour < d_min ? d_hour : d_min;
-      const float score = d_hands < d_digits ? d_hands : d_digits;
-      if (score > best_score) {
-        best_score = score;
-        best_x = lx;
-        best_y = ly;
-      }
+    if (!found_strict && relaxed_score >= 0.0f) {
+      best_x = relaxed_x;
+      best_y = relaxed_y;
+      best_score = relaxed_score;
     }
 
     // Hysteresis: keep previous position unless a new one is significantly better.
@@ -982,10 +1010,10 @@ void drawClockFace(int cx, int cy, int radius, time_t localTime, bool tickSecond
           static_cast<float>(s_clock_ac_last_x), static_cast<float>(s_clock_ac_last_y),
           static_cast<float>(cx), static_cast<float>(cy), static_cast<float>(minute_x),
           static_cast<float>(minute_y));
-        const float last_d_hands = last_d_hour < last_d_min ? last_d_hour : last_d_min;
-        const float last_d_digits =
+      const float last_d_hands = last_d_hour < last_d_min ? last_d_hour : last_d_min;
+      const float last_d_digits =
           minDistanceToClockDigits(s_clock_ac_last_x, s_clock_ac_last_y);
-        const float last_score =
+      const float last_score =
           last_d_hands < last_d_digits ? last_d_hands : last_d_digits;
 
       constexpr float kSwitchImprovePx = 10.0f;
@@ -993,11 +1021,6 @@ void drawClockFace(int cx, int cy, int radius, time_t localTime, bool tickSecond
         best_x = s_clock_ac_last_x;
         best_y = s_clock_ac_last_y;
       }
-    }
-
-    if (best_score < 0.0f) {
-      best_x = cx;
-      best_y = cy + (radius * 34) / 100;
     }
 
     s_clock_ac_last_x = best_x;
@@ -1026,7 +1049,6 @@ void drawStaticGrid(Gfx& gfx) {
   runway::drawLargeAirportRunways(gfx);
   drawCenterDot(cx, cy);
   drawCardinalLabels();
-  drawTimeEdgeMarkers(cx, cy, grid_r);
   drawScaleLabel(cx, cy, grid_r);
   gfx.setTextDatum(textdatum_t::top_left);
 }
@@ -1089,6 +1111,7 @@ void renderFrame() {
     {
       const DrawScope scope(s_frame);
       drawAircraft();
+      drawTimeEdgeMarkers(radar::kCenterX, radar::kCenterY, radar::kGridOuterRadius);
     }
   }
   
@@ -1111,6 +1134,7 @@ void radarDisplayDraw() {
   const DrawScope scope(tft);
   drawStaticGrid(tft);
   drawAircraft();
+  drawTimeEdgeMarkers(radar::kCenterX, radar::kCenterY, radar::kGridOuterRadius);
   tft.setTextDatum(textdatum_t::top_left);
 }
 
