@@ -176,7 +176,9 @@ pio device monitor
 
 ### Web-flashable release image
 
-Single `.bin` for [esptool-js](https://espressif.github.io/esptool-js/) and similar tools (ESP32-C3, 4 MB, flash at **0x0**):
+Single `.bin` for [esptool-js](https://espressif.github.io/esptool-js/) and similar tools (ESP32-C3, 4 MB, flash at **0x0**). This merged image includes the bootloader, partitions, app firmware, and LittleFS web UI files:
+
+Use **Chrome** or **Edge** for Web Serial flashing.
 
 ```bash
 chmod +x scripts/merge-firmware.sh   # once
@@ -200,6 +202,8 @@ Put the board in download mode (hold **BOOT**, tap **RESET**), then flash with C
 
 Flash address for merged image: **`0x0`**.
 
+If this is a **first-time flash**, or you are upgrading from an older build with a **different partition layout**, erase flash first for a clean start. A normal reflash keeps saved Wi‑Fi and settings.
+
 ### CI and releases (GitHub Actions)
 
 | Workflow | When | Output |
@@ -217,7 +221,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The release workflow builds firmware in CI and attaches the merged image to the release. Download from **Releases** on GitHub, then flash at **0x0** (ESP32-C3, 4 MB).
+The release workflow builds firmware in CI and attaches the merged image to the release. Download from **Releases** on GitHub, then flash at **0x0** (ESP32-C3, 4 MB). No separate LittleFS flashing step is required for that release image.
 
 Release policy:
 
@@ -243,6 +247,8 @@ Release policy:
 ### Flashing issues
 
 - Use merged image (`firmware-merged.bin`) at address **`0x0`**.
+- The merged release image already includes the LittleFS web files.
+- Erase flash before programming if this is a fresh board or the partition layout changed.
 - Ensure board is in download mode (hold BOOT, tap RESET) before flashing.
 
 ## Dependencies
