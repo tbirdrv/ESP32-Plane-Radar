@@ -22,7 +22,7 @@ After Wi‑Fi is saved, the device reconnects automatically; the radar runs in t
 
 | Action | Effect |
 |--------|--------|
-| **Short tap** | Cycle range preset (5 → 10 → 15 → 25 km); saved to flash |
+| **Short tap** | Cycle range preset (1 → 5 → 10 → 15 → 20 → 25 mi); saved to flash |
 | **Hold 3 s** | Clear Wi‑Fi, location, and units; reboot into setup portal |
 
 During setup you can also hold BOOT at power-on to force a credential reset (same as the long press).
@@ -38,9 +38,9 @@ During setup you can also hold BOOT at power-on to force a credential reset (sam
 **Reconfigure anytime** (after the device is on your network):
 
 1. Open **`http://plane-radar.local`** or **`http://<device-ip>`** (e.g. from your router or serial log at boot)
-2. Change Wi‑Fi, location, units, or runway overlay; save
+2. Change device settings on the LAN config pages; save
 
-The same portal runs on the setup AP and on the device’s LAN IP while connected to Wi‑Fi. mDNS hostname is `plane-radar` → **plane-radar.local** (`kPortalHostname` in `config.h`). Some clients resolve `.local` slowly; use the IP if needed.
+The setup AP page and LAN config pages expose the same core radar settings, but they are implemented separately. mDNS hostname is `plane-radar` → **plane-radar.local** (`kPortalHostname` in `config.h`). Some clients resolve `.local` slowly; use the IP if needed.
 
 **Custom fields** (stored in NVS):
 
@@ -48,8 +48,10 @@ The same portal runs on the setup AP and on the device’s LAN IP while connecte
 |-------|---------|
 | **Latitude / Longitude** | Radar center and ADS-B query position (defaults in `config.h` until set) |
 | **Field elevation (ft)** | Local field elevation used as the altitude color baseline |
-| **Display distances in miles** | Ring scale label in **mi** instead of **km** (e.g. `6mi` vs `10km`) |
+| **Initial range** | Select one of the shipped mile presets: 1, 5, 10, 15, 20, or 25 mi |
+| **Display distances in miles** | Ring scale label in **mi** instead of **km** |
 | **Show airport runways** | Major-airport runway overlay on the radar (off to hide) |
+| **Show aircraft on the ground** | Include aircraft reported as `ground` in ADS-B results |
 
 After a reset, the device reboots and shows the setup screen immediately (no “Connecting” loop on stale credentials).
 
@@ -67,12 +69,14 @@ Layout and colors: `include/ui/radar_theme.h`.
 
 | Ring 3 label | Outer radius (aircraft scale) |
 |------------|-------------------------------|
-| 5 km / 3 mi | ~6.7 km |
-| 10 km / 6 mi | ~13.3 km (default) |
-| 15 km / 9 mi | ~20 km |
-| 25 km / 16 mi | ~33.3 km |
+| 1 mi / 1.6 km | ~2.1 km |
+| 5 mi / 8.0 km | ~10.7 km |
+| 10 mi / 16.1 km | ~21.5 km |
+| 15 mi / 24.1 km | ~32.2 km |
+| 20 mi / 32.2 km | ~42.9 km |
+| 25 mi / 40.2 km | ~53.6 km |
 
-Preset and miles/km choice persist across reboot (`planeradar` NVS namespace).
+Preset, miles/km choice, runway overlay, and ground-aircraft visibility persist across reboot (`planeradar` NVS namespace).
 
 ### Runways
 

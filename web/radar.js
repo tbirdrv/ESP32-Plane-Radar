@@ -35,10 +35,11 @@ function updateRangeOptionLabels(preferMiles) {
     const km = Number(option.dataset.km);
     if (!Number.isFinite(km)) continue;
     const miles = km / kmPerMile;
+    const kmLabel = Math.abs(km - Math.round(km)) < 0.01 ? `${Math.round(km)}` : km.toFixed(1);
     const milesLabel = miles >= 10 ? miles.toFixed(1) : miles.toFixed(2);
     option.textContent = preferMiles
-      ? `${milesLabel} mi (${km} km)`
-      : `${km} km (${milesLabel} mi)`;
+      ? `${milesLabel} mi`
+      : `${kmLabel} km`;
   }
 }
 
@@ -54,6 +55,7 @@ async function load() {
     $("useMiles").checked = !!d.useMiles;
     updateRangeOptionLabels($("useMiles").checked);
     $("showRunways").checked = !!d.showRunways;
+    $("showGround").checked = !!d.showGround;
     $("clockWindowSec").value = Number(d.clockWindowSec || 0);
     applyMode(currentModeFromFlags(!!d.clockOnly, !!d.radarOnly));
   } catch (e) {
@@ -71,6 +73,7 @@ async function save(ev) {
     rangeIndex: parseInt($("rangeIndex").value, 10),
     useMiles: $("useMiles").checked,
     showRunways: $("showRunways").checked,
+    showGround: $("showGround").checked,
     clockWindowSec: parseInt($("clockWindowSec").value, 10),
     clockOnly: mode === "clock",
     radarOnly: mode === "radar"

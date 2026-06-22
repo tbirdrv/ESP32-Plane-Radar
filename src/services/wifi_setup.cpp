@@ -12,6 +12,7 @@
 #include <ESPmDNS.h>
 #endif
 
+#include <cmath>
 #include <cstdio>
 
 #include "config.h"
@@ -90,6 +91,7 @@ static const char kPortalHeadScript[] PROGMEM =
   "var c=document.getElementById('clock_only');"
   "var r=document.getElementById('radar_only');"
   "var w=document.getElementById('clock_window_sec');"
+  "var m=document.getElementById('range_miles');"
   "if(!c||!r||!w){return;}"
   "var forLabel=function(id){return document.querySelector('label[for=\\\"'+id+'\\\"]');};"
   "var hideField=function(el){"
@@ -99,6 +101,45 @@ static const char kPortalHeadScript[] PROGMEM =
   "};"
   "hideField(c);hideField(r);"
   "var form=c.form||document.querySelector('form');if(!form){return;}"
+  "var ensureRangePreset=function(){"
+  "if(!m||document.getElementById('range_miles_select')){return;}"
+  "var options=['1','5','10','15','20','25'];"
+  "var current=(options.indexOf(m.value)>=0)?m.value:'5';"
+  "m.value=current;"
+   "var s=document.createElement('select');s.id='range_miles_select';s.style.width='100%';s.style.margin='0 0 10px 0';"
+  "options.forEach(function(v){var o=document.createElement('option');o.value=v;o.textContent=v+' mi';s.appendChild(o);});"
+  "s.value=current;"
+  "s.addEventListener('change',function(){m.value=s.value;});"
+  "form.addEventListener('submit',function(){m.value=s.value;});"
+   "var p=m.parentNode;if(p){p.insertBefore(s,m.nextSibling);}"
+   "m.type='hidden';m.style.display='none';"
+  "};"
+  "ensureRangePreset();"
+  "var hideOriginal=function(el){var l=forLabel(el.id);if(l){l.style.display='none';}el.style.display='none';};"
+  "var buildCheckboxRow=function(id,text){"
+  "var el=document.getElementById(id);if(!el||document.getElementById(id+'_row')){return;}"
+  "hideOriginal(el);"
+  "var row=document.createElement('label');row.id=id+'_row';row.style.display='flex';row.style.alignItems='center';row.style.gap='8px';row.style.margin='8px 0 10px 0';"
+  "var box=document.createElement('input');box.type='checkbox';box.checked=el.checked;"
+  "box.addEventListener('change',function(){el.checked=box.checked;});"
+  "row.appendChild(box);row.appendChild(document.createTextNode(text));"
+  "if(el.parentNode){el.parentNode.insertBefore(row,el.nextSibling);}"
+  "form.addEventListener('submit',function(){el.checked=box.checked;});"
+  "};"
+  "var buildNumberRow=function(id,text){"
+  "var el=document.getElementById(id);if(!el||document.getElementById(id+'_row')){return;}"
+  "hideOriginal(el);"
+  "var row=document.createElement('div');row.id=id+'_row';row.style.margin='8px 0 10px 0';"
+  "var lab=document.createElement('div');lab.textContent=text;lab.style.fontWeight='600';lab.style.margin='4px 0';"
+  "var input=document.createElement('input');input.type='number';input.min='0';input.max='59';input.step='1';input.value=el.value;input.style.width='100%';"
+  "input.addEventListener('change',function(){el.value=input.value;});"
+  "row.appendChild(lab);row.appendChild(input);"
+  "if(el.parentNode){el.parentNode.insertBefore(row,el.nextSibling);}"
+  "form.addEventListener('submit',function(){el.value=input.value;});"
+  "return input;"
+  "};"
+  "buildCheckboxRow('show_ground','Show aircraft on the ground');"
+  "var cwInput=buildNumberRow('clock_window_sec','Clock at each minute (sec)');"
   "var group=document.getElementById('display_mode_group');"
   "if(!group){"
   "group=document.createElement('div');group.id='display_mode_group';group.style.margin='8px 0 10px 0';"
@@ -115,8 +156,7 @@ static const char kPortalHeadScript[] PROGMEM =
   "c.checked=(mode==='clock');"
   "r.checked=(mode==='radar');"
   "var dis=(mode!=='auto');"
-  "w.disabled=dis;w.style.opacity=dis?'0.45':'1';"
-  "if(wLabel){wLabel.style.opacity=dis?'0.45':'1';}"
+  "if(cwInput){cwInput.disabled=dis;var cwRow=cwInput.parentNode;if(cwRow){cwRow.style.opacity=dis?'0.45':'1';}cwInput.style.opacity=dis?'0.45':'1';}"
   "};"
   "group.addEventListener('change',sync);"
   "form.addEventListener('submit',sync);"
@@ -132,23 +172,24 @@ constexpr int kCoordParamLen = 20;
 constexpr int kElevParamLen = 8;
 constexpr int kRangeParamLen = 4;
 constexpr int kClockWindowParamLen = 4;
+constexpr float kKmPerMile = 1.609344f;
 
 constexpr char kCoordInputAttrs[] = " type=\"number\" step=\"0.000001\"";
 constexpr char kElevInputAttrs[] =
-    " type=\"number\" min=\"-1500\" max=\"30000\" step=\"1\"";
+  " type=\"number\" min=\"-1500\" max=\"30000\" step=\"1\"";
 constexpr char kRangeInputAttrs[] =
-    " type=\"number\" min=\"0\" max=\"4\" step=\"1\"";
+  " type=\"number\" min=\"1\" max=\"25\" step=\"1\"";
 constexpr char kClockWindowInputAttrs[] =
-    " type=\"number\" min=\"0\" max=\"59\" step=\"1\"";
+  " type=\"number\" min=\"0\" max=\"59\" step=\"1\"";
 
 WiFiManagerParameter s_param_lat("radar_lat", "Latitude (deg)", "0",
-                                 kCoordParamLen, kCoordInputAttrs);
+                 kCoordParamLen, kCoordInputAttrs);
 WiFiManagerParameter s_param_lon("radar_lon", "Longitude (deg)", "0",
-                                 kCoordParamLen, kCoordInputAttrs);
+                 kCoordParamLen, kCoordInputAttrs);
 WiFiManagerParameter s_param_elev("field_elev_ft", "Field elevation (ft)",
-                                  "0", kElevParamLen, kElevInputAttrs);
-WiFiManagerParameter s_param_range("range_index", "Initial range (0-4)", "1",
-                                   kRangeParamLen, kRangeInputAttrs);
+                  "0", kElevParamLen, kElevInputAttrs);
+WiFiManagerParameter s_param_range("range_miles", "Initial range (mi)", "5",
+                   kRangeParamLen, kRangeInputAttrs);
 
 char s_miles_checkbox_attrs[32] = "type=\"checkbox\"";
 WiFiManagerParameter s_param_miles("use_miles", "Display distances in miles", "T", 2,
@@ -157,6 +198,10 @@ WiFiManagerParameter s_param_miles("use_miles", "Display distances in miles", "T
 char s_runways_checkbox_attrs[32] = "type=\"checkbox\"";
 WiFiManagerParameter s_param_runways("show_runways", "Show airport runways", "T", 2,
                                      s_runways_checkbox_attrs, WFM_LABEL_AFTER);
+
+char s_ground_checkbox_attrs[32] = "type=\"checkbox\"";
+WiFiManagerParameter s_param_ground("show_ground", "Show aircraft on the ground", "T", 2,
+                                    s_ground_checkbox_attrs, WFM_LABEL_AFTER);
 
 WiFiManagerParameter s_param_clock_window("clock_window_sec",
                                           "Clock at each minute (sec)", "10",
@@ -203,7 +248,8 @@ void refreshPortalParamDefaults() {
   snprintf(elev_buf, sizeof(elev_buf), "%ld",
            static_cast<long>(services::location::elevationFt()));
   snprintf(range_buf, sizeof(range_buf), "%u",
-           static_cast<unsigned>(ui::radar::rangeIndex()));
+           static_cast<unsigned>(lroundf(ui::radar::rangeCurrent().ring3_km /
+                                         kKmPerMile)));
   snprintf(clock_buf, sizeof(clock_buf), "%u",
            static_cast<unsigned>(ui::radar::clockMinuteWindowSec()));
 
@@ -220,6 +266,11 @@ void refreshPortalParamDefaults() {
   snprintf(s_runways_checkbox_attrs, sizeof(s_runways_checkbox_attrs),
            "type=\"checkbox\"%s", ui::radar::showRunways() ? " checked" : "");
   s_param_runways.setValue("T", 2);
+
+  snprintf(s_ground_checkbox_attrs, sizeof(s_ground_checkbox_attrs),
+           "type=\"checkbox\"%s",
+           ui::radar::showGroundAircraft() ? " checked" : "");
+  s_param_ground.setValue("T", 2);
 
   snprintf(s_clock_only_checkbox_attrs, sizeof(s_clock_only_checkbox_attrs),
            "type=\"checkbox\"%s",
@@ -239,9 +290,10 @@ void onPortalParamsSaved() {
     Serial.println("Invalid lat/lon/elevation in setup portal; keeping previous values");
   }
 
-  ui::radar::saveRangeIndexFromPortal(s_param_range.getValue());
+  ui::radar::saveRangeMilesFromPortal(s_param_range.getValue());
   ui::radar::saveMilesFromPortal(s_param_miles.getValue());
   ui::radar::saveRunwaysFromPortal(s_param_runways.getValue());
+  ui::radar::saveShowGroundAircraftFromPortal(s_param_ground.getValue());
   ui::radar::saveClockMinuteWindowSecFromPortal(s_param_clock_window.getValue());
 
   bool clock_only = portalOptionChecked(s_param_clock_only.getValue());
@@ -266,6 +318,7 @@ void attachPortalParams(WiFiManager& wm) {
   wm.addParameter(&s_param_range);
   wm.addParameter(&s_param_miles);
   wm.addParameter(&s_param_runways);
+  wm.addParameter(&s_param_ground);
   wm.addParameter(&s_param_clock_window);
   wm.addParameter(&s_param_clock_only);
   wm.addParameter(&s_param_radar_only);

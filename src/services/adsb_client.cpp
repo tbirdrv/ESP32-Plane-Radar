@@ -12,6 +12,7 @@
 #include <cstring>
 
 #include "config.h"
+#include "ui/radar_range.h"
 
 namespace services::adsb {
 
@@ -325,7 +326,7 @@ bool fetchUpdate(double center_lat, double center_lon, float fetch_radius_km) {
     if (!plane["lat"].is<float>() || !plane["lon"].is<float>()) {
       continue;
     }
-    if (isOnGround(plane) && !config::kAdsbShowGroundAircraft) {
+    if (isOnGround(plane) && !ui::radar::showGroundAircraft()) {
       continue;
     }
 

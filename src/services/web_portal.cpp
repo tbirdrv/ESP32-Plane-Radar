@@ -68,6 +68,7 @@ void handleGetRadar() {
   doc["rangeIndex"] = ui::radar::rangeIndex();
   doc["useMiles"] = ui::radar::useMiles();
   doc["showRunways"] = ui::radar::showRunways();
+  doc["showGround"] = ui::radar::showGroundAircraft();
   doc["clockWindowSec"] = ui::radar::clockMinuteWindowSec();
   doc["clockOnly"] = ui::radar::clockOnlyModeEnabled();
   doc["radarOnly"] = ui::radar::radarOnlyModeEnabled();
@@ -160,6 +161,7 @@ void handlePostRadar() {
 
   ui::radar::saveMilesFromPortal(checkboxArg(doc, "useMiles"));
   ui::radar::saveRunwaysFromPortal(checkboxArg(doc, "showRunways"));
+  ui::radar::saveShowGroundAircraftFromPortal(checkboxArg(doc, "showGround"));
 
   char range_buf[8];
   snprintf(range_buf, sizeof(range_buf), "%ld",

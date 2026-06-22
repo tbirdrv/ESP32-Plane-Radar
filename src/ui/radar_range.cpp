@@ -1,6 +1,7 @@
 #include "ui/radar_range.h"
 
 #include "ui/radar_theme.h"
+#include "config.h"
 
 #include <Preferences.h>
 #include <algorithm>
@@ -17,6 +18,7 @@ constexpr char kPrefsNamespace[] = "planeradar";
 constexpr char kPrefsRangeKey[] = "rangeIdx";
 constexpr char kPrefsMilesKey[] = "useMiles";
 constexpr char kPrefsRunwaysKey[] = "showRwys";
+constexpr char kPrefsGroundKey[] = "showGnd";
 constexpr char kPrefsClockWindowKey[] = "clkWinSec";
 constexpr char kPrefsLanPortalKey[] = "lanPortal";
 constexpr char kPrefsClockOnlyKey[] = "clockOnly";
@@ -32,8 +34,9 @@ constexpr float kKmPerMile = 1.609344f;
 
 Preferences s_prefs;
 uint8_t s_range_index = kDefaultRangeIndex;
-bool s_use_miles = false;
+bool s_use_miles = true;
 bool s_show_runways = true;
+bool s_show_ground_aircraft = config::kAdsbShowGroundAircraft;
 uint8_t s_clock_minute_window_sec = kDefaultClockMinuteWindowSec;
 bool s_lan_portal_enabled = kDefaultLanPortalEnabled;
 bool s_clock_only_enabled = kDefaultClockOnlyEnabled;
@@ -60,6 +63,14 @@ void saveShowRunways() {
     return;
   }
   s_prefs.putBool(kPrefsRunwaysKey, s_show_runways);
+  s_prefs.end();
+}
+
+void saveShowGroundAircraft() {
+  if (!s_prefs.begin(kPrefsNamespace, false)) {
+    return;
+  }
+  s_prefs.putBool(kPrefsGroundKey, s_show_ground_aircraft);
   s_prefs.end();
 }
 
@@ -116,8 +127,10 @@ void rangeInit() {
   const uint8_t saved = s_prefs.getUChar(kPrefsRangeKey, kDefaultRangeIndex);
   s_range_index =
       (saved < kRangePresetCount) ? saved : kDefaultRangeIndex;
-  s_use_miles = s_prefs.getBool(kPrefsMilesKey, false);
+  s_use_miles = s_prefs.getBool(kPrefsMilesKey, true);
   s_show_runways = s_prefs.getBool(kPrefsRunwaysKey, true);
+    s_show_ground_aircraft =
+      s_prefs.getBool(kPrefsGroundKey, config::kAdsbShowGroundAircraft);
     const uint8_t saved_clock_window =
       s_prefs.getUChar(kPrefsClockWindowKey, kDefaultClockMinuteWindowSec);
     s_clock_minute_window_sec =
@@ -155,6 +168,8 @@ bool useMiles() { return s_use_miles; }
 
 bool showRunways() { return s_show_runways; }
 
+bool showGroundAircraft() { return s_show_ground_aircraft; }
+
 uint8_t clockMinuteWindowSec() { return s_clock_minute_window_sec; }
 
 bool lanPortalEnabled() { return s_lan_portal_enabled; }
@@ -173,6 +188,13 @@ void saveRunwaysFromPortal(const char* checkbox_value) {
   s_show_runways = portalCheckboxChecked(checkbox_value);
   saveShowRunways();
   Serial.printf("Runway overlay: %s\n", s_show_runways ? "on" : "off");
+}
+
+void saveShowGroundAircraftFromPortal(const char* checkbox_value) {
+  s_show_ground_aircraft = portalCheckboxChecked(checkbox_value);
+  saveShowGroundAircraft();
+  Serial.printf("Show ground aircraft: %s\n",
+                s_show_ground_aircraft ? "on" : "off");
 }
 
 void saveRangeIndexFromPortal(const char* index_value) {
@@ -199,6 +221,53 @@ void saveRangeIndexFromPortal(const char* index_value) {
   Serial.printf("Range preset index: %u (ring3 %.0f km)\n",
                 static_cast<unsigned>(s_range_index),
                 static_cast<double>(kRangePresets[s_range_index].ring3_km));
+}
+
+void saveRangeMilesFromPortal(const char* miles_value) {
+  if (miles_value == nullptr || miles_value[0] == '\0') {
+    return;
+  }
+
+  char* end = nullptr;
+  const float miles = strtof(miles_value, &end);
+  if (end == miles_value || (end != nullptr && *end != '\0') ||
+      !std::isfinite(miles)) {
+    Serial.printf("Range preset unchanged (invalid miles value: '%s')\n",
+                  miles_value);
+    return;
+  }
+
+  const int miles_int = static_cast<int>(lroundf(miles));
+  bool allowed = false;
+  for (const int v : {1, 5, 10, 15, 20, 25}) {
+    if (miles_int == v) {
+      allowed = true;
+      break;
+    }
+  }
+  if (!allowed) {
+    Serial.printf("Range preset unchanged (unsupported miles value: '%s')\n",
+                  miles_value);
+    return;
+  }
+
+  uint8_t best_index = 0;
+  float best_error = 1e9f;
+  for (uint8_t i = 0; i < kRangePresetCount; ++i) {
+    const float preset_miles = kRangePresets[i].ring3_km / kKmPerMile;
+    const float error = fabsf(preset_miles - miles);
+    if (error < best_error) {
+      best_error = error;
+      best_index = i;
+    }
+  }
+
+  s_range_index = best_index;
+  saveRangeIndex();
+  Serial.printf("Range preset: %.2f mi (index %u)\n",
+                static_cast<double>(kRangePresets[s_range_index].ring3_km /
+                                    kKmPerMile),
+                static_cast<unsigned>(s_range_index));
 }
 
 void saveClockMinuteWindowSecFromPortal(const char* seconds_value) {
@@ -260,8 +329,9 @@ void formatCurrentRing3Label(char* buf, size_t len) {
 }
 
 void unitsReset() {
-  s_use_miles = false;
+  s_use_miles = true;
   s_show_runways = true;
+  s_show_ground_aircraft = config::kAdsbShowGroundAircraft;
   s_clock_minute_window_sec = kDefaultClockMinuteWindowSec;
   s_lan_portal_enabled = kDefaultLanPortalEnabled;
   s_clock_only_enabled = kDefaultClockOnlyEnabled;
@@ -269,6 +339,7 @@ void unitsReset() {
   if (s_prefs.begin(kPrefsNamespace, false)) {
     s_prefs.remove(kPrefsMilesKey);
     s_prefs.remove(kPrefsRunwaysKey);
+    s_prefs.remove(kPrefsGroundKey);
     s_prefs.remove(kPrefsClockWindowKey);
     s_prefs.remove(kPrefsLanPortalKey);
     s_prefs.remove(kPrefsClockOnlyKey);
