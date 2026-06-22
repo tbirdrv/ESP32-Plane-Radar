@@ -23,6 +23,7 @@ After Wi‑Fi is saved, the device reconnects automatically; the radar runs in t
 | Action | Effect |
 |--------|--------|
 | **Short tap** | Cycle range preset (1 → 5 → 10 → 15 → 20 → 25 mi); saved to flash |
+| **Double tap** | Show the current IP address screen briefly so you can reach the LAN portal by IP |
 | **Hold 3 s** | Clear Wi‑Fi, location, and units; reboot into setup portal |
 
 During setup you can also hold BOOT at power-on to force a credential reset (same as the long press).
